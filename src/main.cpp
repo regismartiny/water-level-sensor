@@ -4,8 +4,8 @@
 #include "Button2.h"
 #include "WiFi.h"
 #include "EspMQTTClient.h"
-#include <ESP32Time.h>
 #include "AppConfig.h"
+#include "NTPTime.h"
 
 #define ADC_EN                              14 //ADC_EN is the ADC detection enable port
 #define ADC_PIN                             34
@@ -15,28 +15,18 @@
 #define MIN_USB_VOL                          4.8 //volts
 #define BUTTON_RIGHT                        35
 #define BUTTON_LEFT                          0
+#define TIME_STRING_LENGTH                 100 
 #define MINIMUM_TIME_LONG_CLICK            200 //ms
 #define DOMOTICZ_TOPIC_SEND                "domoticz/in"
 #define DOMOTICZ_TOPIC_LAST_WILL           "domoticz/out/lastwill"
 #define DOMOTICZ_VOLTAGE_DEVICE_ID           6
 #define DOMOTICZ_CHARGE_DEVICE_ID            7
 #define BATTERY_INFO_UPDATE_INTERVAL        10 //seconds
-#define TIME_STRING_LENGTH                 100 
 #define DOMOTICZ_WATER_LEVEL_DEVICE_ID       8
 #define WATER_LEVEL_INFO_UPDATE_INTERVAL    10 //seconds
 #define DISPLAY_SLEEP_TIMEOUT               10 //seconds without interaction to turn off display
 #define DEEP_SLEEP_TIMEOUT                  60 //seconds without interaction to start deep sleep
 #define DEEP_SLEEP_WAKEUP                  600 //seconds of deep sleeping for device to wake up
-
-RTC_DATA_ATTR int bootCount = 0;
-
-TaskHandle_t waterLevelTaskHandle;
-
-long gmtOffset_sec = -10800; // offset in seconds GMT-3
-int daylightOffset_sec = 0;
-const char* ntpServer = "br.pool.ntp.org";
-ESP32Time rtc(gmtOffset_sec);
-TaskHandle_t updateTimeTaskHandle;
 
 enum MENUS { INSTRUCTIONS, WATER_LEVEL, WIFI_SCAN, BATTERY_INFO, DEEP_SLEEP };
 struct {
@@ -71,6 +61,10 @@ struct {
   boolean enableDisplayInfo = true;
 } myWaterLevelInfo;
 
+RTC_DATA_ATTR int bootCount = 0;
+
+TaskHandle_t waterLevelTaskHandle;
+
 TFT_eSPI tft = TFT_eSPI();
 TaskHandle_t updateDisplayTaskHandle;
 int displaySleepTimer = DISPLAY_SLEEP_TIMEOUT;
@@ -87,6 +81,9 @@ char wifiNetworksBuff[512];
 
 Config myConfig = Config();
 AppConfig myAppConfig = AppConfig(&myConfig);
+
+TaskHandle_t updateTimeTaskHandle;
+NTPTime ntpTime = NTPTime();
 
 EspMQTTClient client = EspMQTTClient();
 
@@ -145,6 +142,17 @@ void changeMenuOption(MENUS menuOption) {
   myMenuInfo.activeMenu = menuOption;
 }
 
+void resetDisplaySleepTimer() {
+  displaySleepTimer = DISPLAY_SLEEP_TIMEOUT;
+}
+void resetDeepSleepTimer() {
+  deepSleepTimer = DEEP_SLEEP_TIMEOUT;
+}
+void resetSleepTimers() {
+  resetDeepSleepTimer();
+  resetDisplaySleepTimer();
+}
+
 boolean isDisplayActive() {
   int r = digitalRead(TFT_BL);
   return r == 1;
@@ -157,16 +165,6 @@ void turnOffDisplay() {
   tft.writecommand(TFT_DISPOFF);
   tft.writecommand(TFT_SLPIN);
 }
-void resetDisplaySleepTimer() {
-  displaySleepTimer = DISPLAY_SLEEP_TIMEOUT;
-}
-void resetDeepSleepTimer() {
-  deepSleepTimer = DEEP_SLEEP_TIMEOUT;
-}
-void resetSleepTimers() {
-  resetDeepSleepTimer();
-  resetDisplaySleepTimer();
-}
 void wakeUpDisplay() {
   if (!isDisplayActive()) {
     tft.writecommand(TFT_DISPON);
@@ -177,6 +175,7 @@ void wakeUpDisplay() {
     delay(500);
   }
 }
+
 void goToDeepSleep() {
   Serial.println("Initiating deep sleep");
   Serial.printf("Will wakeup after %d seconds\n", DEEP_SLEEP_WAKEUP);
@@ -197,6 +196,7 @@ void goToSleep() {
   // esp_sleep_enable_ext1_wakeup(GPIO_SEL_35, ESP_EXT1_WAKEUP_ALL_LOW);
   goToDeepSleep();
 }
+
 void printBootCount() {
    //Increment boot number and print it every reboot
   ++bootCount;
@@ -243,32 +243,6 @@ void createDisplaySleepTask() {
   xTaskCreate(display_sleep_task, "display_sleep_task", 2048, NULL, tskIDLE_PRIORITY, &displaySleepTaskHandle);
 }
 
-void setTime() {
-  /*---------set Time with NTP---------------*/
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo)){
-    Serial.println("Time received from NTP");
-    Serial.printf("year: %d\n", 1900 + timeinfo.tm_year);
-    Serial.printf("month: %d\n", 1 + timeinfo.tm_mon);
-    Serial.printf("month day: %d\n", timeinfo.tm_mday);
-    Serial.printf("week day: %c%c\n", "SMTWTFS"[timeinfo.tm_wday], "uouehra"[timeinfo.tm_wday]);
-    Serial.printf("year day: %d\n", 1 + timeinfo.tm_yday);
-    Serial.printf("hour: %d\n", timeinfo.tm_hour);
-    Serial.printf("minute: %d\n", timeinfo.tm_min);
-    Serial.printf("second: %d\n", timeinfo.tm_sec);
-    rtc.setTimeStruct(timeinfo); 
-  } else {
-    Serial.println("Error getting time from NTP");
-  }
-}
-void getTimeString(char* outStr, int length) {
-  time_t t = time(NULL);
-  struct tm *t_st;
-  t_st = localtime(&t);
-  snprintf(outStr, length, "%02d/%02d/%02d %02d:%02d:%02d", t_st->tm_mday, 1 + t_st->tm_mon, 
-  abs(1900 + t_st->tm_year - 2000), t_st->tm_hour, t_st->tm_min, t_st->tm_sec);
-}
 void printTime() {
   if (myTimeInfo.timeChanged && strcmp(myTimeInfo.timeOnDisplay, myTimeInfo.lastTime) != 0) {
     tft.setTextDatum(TL_DATUM);
@@ -296,7 +270,7 @@ void update_time_task(void *arg) {
   int length = TIME_STRING_LENGTH * sizeof(char);
   char timeString[length];
   while(true) {
-    getTimeString(timeString, length);
+    ntpTime.getTimeString(timeString, length);
     updateTimeInfo(timeString);
     taskDelay(1000);
   }
@@ -582,7 +556,7 @@ void mqttInit()
 // WARNING : YOU MUST IMPLEMENT IT IF YOU USE EspMQTTClient
 void onConnectionEstablished()
 {
-  setTime();
+  ntpTime.setTime();
   // Subscribe to "domoticz/out" and display received message to Serial
   // client.subscribe("domoticz/out", [](const String& payload) {
   //   Serial.println("New message from domoticz/out: " + payload);
