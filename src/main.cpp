@@ -1,4 +1,11 @@
+#ifdef CORE_DEBUG_LEVEL
+#undef CORE_DEBUG_LEVEL
+#endif
+#define CORE_DEBUG_LEVEL 3
+#define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
 #include <Arduino.h>
+#include <stdio.h>
+#include <SPIFFS.h>
 #include <TFT_eSPI.h>
 #include <Battery18650Stats.h>
 #include "Button2.h"
@@ -17,8 +24,11 @@
 #define BUTTON_LEFT                          0
 #define TIME_STRING_LENGTH                 100 
 #define MINIMUM_TIME_LONG_CLICK            200 //ms
+#define MQTT_MAX_PACKET_SIZE_              1024
 #define DOMOTICZ_TOPIC_SEND                "domoticz/in"
-#define DOMOTICZ_TOPIC_LAST_WILL           "domoticz/out/lastwill"
+#define DOMOTICZ_TOPIC_LAST_WILL           "domoticz/in/lastwill"
+#define DOMOTICZ_TOPIC_LOG                 "domoticz/in/log"
+#define DOMOTICZ_TOPIC_REQUEST_LOG         "domoticz/out/log"
 #define DOMOTICZ_VOLTAGE_DEVICE_ID           6
 #define DOMOTICZ_CHARGE_DEVICE_ID            7
 #define BATTERY_INFO_UPDATE_INTERVAL        10 //seconds
@@ -27,6 +37,10 @@
 #define DISPLAY_SLEEP_TIMEOUT               10 //seconds without interaction to turn off display
 #define DEEP_SLEEP_TIMEOUT                  60 //seconds without interaction to start deep sleep
 #define DEEP_SLEEP_WAKEUP                  600 //seconds of deep sleeping for device to wake up
+#define LOG_FILENAME                       "/LOGS.txt"
+#define LOG_TAG                            "ESP32"
+#define LOGE(a, ...) logE(a, ##__VA_ARGS__)
+#define LOGI(a, ...) logI(a, ##__VA_ARGS__)
 
 enum MENUS { INSTRUCTIONS, WATER_LEVEL, WIFI_SCAN, BATTERY_INFO, DEEP_SLEEP };
 struct {
@@ -86,6 +100,100 @@ TaskHandle_t updateTimeTaskHandle;
 NTPTime ntpTime = NTPTime();
 
 EspMQTTClient client = EspMQTTClient();
+
+static char log_print_buffer[512];
+static char log_read_buffer[MQTT_MAX_PACKET_SIZE_];
+static char log_write_buffer[MQTT_MAX_PACKET_SIZE_];
+
+void SPIFFSInit() {
+  if (!SPIFFS.begin(true)) {
+    Serial.println("An Error has occurred while mounting SPIFFS");
+    return;
+  }
+}
+
+int vprintf_into_spiffs(const char* szFormat, va_list args) {
+  Serial.println("vprintf_into_spiffs"); 
+	//write evaluated format string into buffer
+	int ret = vsnprintf(log_write_buffer, sizeof(log_write_buffer), szFormat, args);
+
+	//output is now in buffer. write to file.
+	if(ret >= 0) {
+    if(!SPIFFS.exists(LOG_FILENAME)) {
+      File writeLog = SPIFFS.open(LOG_FILENAME, FILE_WRITE);
+      if(!writeLog) Serial.println("Couldn't open log file"); 
+      delay(50);
+      writeLog.close();
+    }
+    
+		File spiffsLogFile = SPIFFS.open(LOG_FILENAME, FILE_APPEND);
+		//debug output
+		printf("[Writing to SPIFFS] %.*s", ret, log_write_buffer);
+		spiffsLogFile.write((uint8_t*) log_write_buffer, (size_t) ret);
+		//to be safe in case of crashes: flush the output
+		spiffsLogFile.flush();
+		spiffsLogFile.close();
+	}
+	return ret;
+}
+
+void logE(const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+  va_end(args);
+
+  vsnprintf(log_print_buffer, sizeof(log_print_buffer), format, args);
+  log_d("[%s] ", log_print_buffer, LOG_TAG);
+  esp_log_write(ESP_LOG_DEBUG, LOG_TAG, log_print_buffer);
+}
+void logI(const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+  va_end(args);
+  
+  vsnprintf(log_print_buffer, sizeof(log_print_buffer), format, args);
+  log_i("[%s] ", log_print_buffer, LOG_TAG);
+  esp_log_write(ESP_LOG_INFO, LOG_TAG, log_print_buffer);
+}
+
+void logInit() {
+  esp_log_set_vprintf(&vprintf_into_spiffs);
+  // esp_log_level_set(LOG_TAG, ESP_LOG_VERBOSE);
+  LOGI("Log initiated");
+}
+
+void readLogFile() {
+  SPIFFSInit();
+  File logFile = SPIFFS.open(LOG_FILENAME);
+  if(!logFile){
+    Serial.println("Failed to open log file for reading");
+    LOGE("Failed to open log file for reading");
+    return;
+  }
+
+  // char* pBuffer;
+  // unsigned int fileSize = logFile.size();
+  // pBuffer = (char*)malloc(fileSize + 1);
+  // logFile.read((uint8_t*)log_read_buffer, fileSize);
+  logFile.read((uint8_t*)log_read_buffer, MQTT_MAX_PACKET_SIZE_);
+  // Serial.println("Log file content:");
+  // Serial.println(log_read_buffer);
+  // pBuffer[fileSize] = '\0';
+  
+  // free(pBuffer);
+
+  logFile.close();
+}
+
+void truncateLogFile() {
+  SPIFFSInit();
+  SPIFFS.remove(LOG_FILENAME);
+}
+
+void publishLogContent() {
+  readLogFile();
+  client.publish(DOMOTICZ_TOPIC_LOG, log_read_buffer);
+}
 
 void serialInit() {
   Serial.begin(9600);
@@ -177,8 +285,8 @@ void wakeUpDisplay() {
 }
 
 void goToDeepSleep() {
-  Serial.println("Initiating deep sleep");
-  Serial.printf("Will wakeup after %d seconds\n", DEEP_SLEEP_WAKEUP);
+  LOGI("Initiating deep sleep");
+  LOGI("Will wakeup after %d seconds", DEEP_SLEEP_WAKEUP);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_35, 0);
   delay(200);
   Serial.flush();
@@ -200,31 +308,34 @@ void goToSleep() {
 void printBootCount() {
    //Increment boot number and print it every reboot
   ++bootCount;
-  Serial.println("Boot number: " + String(bootCount));
+  LOGI("Boot number: %i", bootCount);
 }
 void printWakeupReason(){
   esp_sleep_wakeup_cause_t wakeup_reason;
-
   wakeup_reason = esp_sleep_get_wakeup_cause();
 
   switch(wakeup_reason)
   {
-    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
-    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
-    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
-    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
-    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+    case ESP_SLEEP_WAKEUP_EXT0 : LOGI("Wakeup caused by external signal using RTC_IO"); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : LOGI("Wakeup caused by external signal using RTC_CNTL"); break;
+    case ESP_SLEEP_WAKEUP_TIMER : {
+      LOGI("Wakeup caused by timer"); 
+      turnOffDisplay();
+      break;
+    }
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : LOGI("Wakeup caused by touchpad"); break;
+    case ESP_SLEEP_WAKEUP_ULP : LOGI("Wakeup caused by ULP program"); break;
+    default : LOGI("Wakeup was not caused by deep sleep: %s", String(wakeup_reason)); break;
   }
 }
 
 void display_sleep_task(void *args) {
   while(true) {
-    Serial.printf("Display sleep timer: %d\n", displaySleepTimer);
-    Serial.printf("Deep sleep timer: %d\n", deepSleepTimer);
+    LOGI("Display sleep timer: %d", displaySleepTimer);
+    LOGI("Deep sleep timer: %d", deepSleepTimer);
     if (displaySleepTimer == 0) {
       turnOffDisplay();
-      resetDisplaySleepTimer();
+      // resetDisplaySleepTimer();
     } else {
       displaySleepTimer--;
     }
@@ -277,7 +388,6 @@ void update_time_task(void *arg) {
 }
 void createTimeTask() {
   xTaskCreate(update_time_task, "update_time_task", 2048, NULL, tskIDLE_PRIORITY, &updateTimeTaskHandle);
-  // vTaskSuspend(updateTimeTaskHandle);
 }
 void resumeUpdateTimeTask() {
   vTaskResume(updateTimeTaskHandle);
@@ -285,7 +395,7 @@ void resumeUpdateTimeTask() {
 
 void publishWaterLevelInfo(int waterLevel) {
   if (!client.isConnected()) {
-    Serial.println("publishWaterLevelInfo(): MQTT client is not connected.");
+    LOGE("publishWaterLevelInfo(): MQTT client is not connected.");
     return;
   }
   char waterLevelBuff[100];
@@ -294,7 +404,7 @@ void publishWaterLevelInfo(int waterLevel) {
 }
 void printWaterLevelInfo() {
   if (eTaskGetState(waterLevelTaskHandle) == eSuspended) {
-    Serial.println("printWaterLevelInfo(): task is suspended");
+    LOGI("printWaterLevelInfo(): task is suspended");
     return;
   }
   if (!myWaterLevelInfo.enableDisplayInfo) return;
@@ -325,8 +435,7 @@ void water_level_task(void *arg) {
   while(true) {
     int waterLevel = digitalRead(SENSOR_PIN);
 
-    Serial.print("\nWater Sensor Level: ");
-    Serial.println(waterLevel);
+    LOGI("Water Sensor Level: %d", waterLevel);
 
     updateWaterLevelInfo(waterLevel);
     publishWaterLevelInfo(waterLevel);
@@ -335,12 +444,11 @@ void water_level_task(void *arg) {
 }
 void createWaterLevelTask() {
   xTaskCreate(water_level_task, "water_level_task", 2048, NULL, tskIDLE_PRIORITY, &waterLevelTaskHandle);
-  // waterLevelTaskHandle(updateTimeTaskHandle);
 }
 
 void publishBatteryInfo(int batteryChargeLevel, double batteryVoltage) {
   if (!client.isConnected()) {
-    Serial.println("publishBatteryInfo(): MQTT client is not connected.");
+    LOGI("publishBatteryInfo(): MQTT client is not connected.");
     return;
   }
   char voltageBuff[100];
@@ -352,7 +460,7 @@ void publishBatteryInfo(int batteryChargeLevel, double batteryVoltage) {
 }
 void printBatteryInfo() {
   if (eTaskGetState(batteryInfoTaskHandle) == eSuspended) {
-    Serial.println("printBatteryInfo(): task is suspended");
+    LOGI("printBatteryInfo(): task is suspended");
     return;
   }
   if (!myBatteryInfo.enableDisplayInfo) {
@@ -402,7 +510,6 @@ void updateBatteryInfo(int batteryChargeLevel, double batteryVoltage) {
   }
   myBatteryInfo.lastCharge = batteryChargeLevel;
   myBatteryInfo.lastVoltage = batteryVoltage;
-  // Serial.printf("\nmyBatteryInfo.lastCharge %d", myBatteryInfo.lastCharge);
   // Serial.printf("\nmyBatteryInfo.prevCharge %d", myBatteryInfo.prevCharge);
   // Serial.printf("\nmyBatteryInfo.lastVoltage %f", myBatteryInfo.lastVoltage);
   // Serial.printf("\nmyBatteryInfo.prevVoltage %f", myBatteryInfo.prevVoltage);
@@ -414,14 +521,9 @@ void battery_info_task(void *arg) {
     int batteryChargeLevel = battery.getBatteryChargeLevel();
     double batteryVoltage = battery.getBatteryVolts();
 
-    Serial.print("Volts: ");
-    Serial.println(batteryVoltage);
-
-    Serial.print("Charge level: ");
-    Serial.println(batteryChargeLevel);
-
-    Serial.print("Charge level (using the reference table): ");
-    Serial.println(battery.getBatteryChargeLevel(true));
+    LOGI("Volts: %.2f", batteryVoltage);
+    LOGI("Charge level: %d", batteryChargeLevel);
+    LOGI("Charge level (using the reference table): %d", battery.getBatteryChargeLevel(true));
 
     updateBatteryInfo(batteryChargeLevel, batteryVoltage);
     publishBatteryInfo(batteryChargeLevel, batteryVoltage);
@@ -435,7 +537,7 @@ void suspendBatteryInfoTask() {
     Serial.println("BatteryInfoTask not yet created");
     return;
   }
-  Serial.println("Suspending batteryInfo task");
+  LOGI("Suspending batteryInfo task");
   vTaskSuspend(batteryInfoTaskHandle);
 }
 void createBatteryInfoTask() {
@@ -443,7 +545,7 @@ void createBatteryInfoTask() {
     Serial.println("BatteryInfoTask already created");
     return;
   }
-  Serial.println("Creating batteryInfo task ");
+  LOGI("Creating batteryInfo task ");
   xTaskCreate(battery_info_task, "battery_info_task", 2048, NULL, tskIDLE_PRIORITY, &batteryInfoTaskHandle);
 }
 void resumeBatteryInfoTask() {
@@ -551,29 +653,31 @@ void mqttInit()
   client.enableHTTPWebUpdater(); // Enable the web updater. User and password default to values of MQTTUsername and MQTTPassword. These can be overridded with enableHTTPWebUpdater("user", "password").
   client.enableOTA(); // Enable OTA (Over The Air) updates. Password defaults to MQTTPassword. Port is the default OTA port. Can be overridden with enableOTA("password", port).
   client.enableLastWillMessage(DOMOTICZ_TOPIC_LAST_WILL, "going offline");  // You can activate the retain flag by setting the third parameter to true
+  client.setMaxPacketSize(MQTT_MAX_PACKET_SIZE_);
 }
 // This function is called once everything is connected (Wifi and MQTT)
 // WARNING : YOU MUST IMPLEMENT IT IF YOU USE EspMQTTClient
 void onConnectionEstablished()
 {
   ntpTime.setTime();
-  // Subscribe to "domoticz/out" and display received message to Serial
-  // client.subscribe("domoticz/out", [](const String& payload) {
-  //   Serial.println("New message from domoticz/out: " + payload);
-  // });
+
+  client.subscribe(DOMOTICZ_TOPIC_REQUEST_LOG, [](const String& payload) {
+    Serial.println("Log request message received");
+    LOGI("Log request message received");
+    publishLogContent();
+  });
 
   // Subscribe to "mytopic/wildcardtest/#" and display received message to Serial
   // client.subscribe("domoticz/out/#", [](const String & topic, const String & payload) {
   //   Serial.println("(From wildcard) topic: " + topic + ", payload: " + payload);
   // });
 
-  // Publish a message to "mytopic/test"
-  client.publish("domoticz/out/test", "This is a message from WaterLevelSensor"); // You can activate the retain flag by setting the third parameter to true
+  client.publish("domoticz/in/test", "This is a message from WaterLevelSensor"); // You can activate the retain flag by setting the third parameter to true
 
   // Execute delayed instructions
-  client.executeDelayed(5 * 1000, []() {
-    client.publish("domoticz/out/test123", "This is a message from WaterLevelSensor sent 5 seconds later");
-  });
+  // client.executeDelayed(5 * 1000, []() {
+  //   client.publish("domoticz/out/test123", "This is a message from WaterLevelSensor sent 5 seconds later");
+  // });
 }
 
 boolean validateLongClick(Button2 &b) {
@@ -595,7 +699,7 @@ void button_init()
     }
     resetSleepTimers();
     if (!validateLongClick(b)) return;
-    Serial.println("Right button long click");
+    LOGI("Right button long click");
     changeMenuOption(DEEP_SLEEP);
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
@@ -609,8 +713,8 @@ void button_init()
       return;
     }
     resetSleepTimers();
-    Serial.println("Right button press");
-    Serial.println("Show Battery Info..");
+    LOGI("Right button click");
+    LOGI("Go to Battery info..");
     changeMenuOption(BATTERY_INFO);
   });
 
@@ -621,8 +725,8 @@ void button_init()
     }
     resetSleepTimers();
     if (!validateLongClick(b)) return;
-    Serial.println("Left button long click");
-    Serial.println("Scan WIFI");
+    LOGI("Left button long click");
+    LOGI("Go to Scan WIFI...");
     changeMenuOption(WIFI_SCAN);
     wifi_scan();
   });
@@ -632,9 +736,13 @@ void button_init()
       return;
     }
     resetSleepTimers();
-    Serial.println("Left button press");
-    Serial.println("Show Water Level..");
+    LOGI("Left button press");
+    LOGI("Go to Water Level info..");
     changeMenuOption(WATER_LEVEL);
+  });
+  leftButton.setDoubleClickHandler([](Button2 & b) {
+    Serial.println("Truncating log file");
+    truncateLogFile();
   });
 }
 void button_loop()
@@ -648,12 +756,14 @@ void loadAppConfig() {
 }
 
 void setup() {
+  SPIFFSInit();
   serialInit();
+  logInit();
+  displayInit();
   printBootCount();
   printWakeupReason();
   loadAppConfig();
   pinoutInit();
-  displayInit();
   changeMenuOption(INSTRUCTIONS);
   button_init();
   mqttInit();

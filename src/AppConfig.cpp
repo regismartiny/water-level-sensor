@@ -46,7 +46,7 @@ bool AppConfig::loadJsonConfig()
   }
 
   auto err = deserializeJson(json_doc, file);
-  SPIFFS.end();
+  // SPIFFS.end();
   if(err) {
     Serial.printf("Unable to deserialize JSON to JsonDocument: %s\n", err.c_str() );
     return false;
