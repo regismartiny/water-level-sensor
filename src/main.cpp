@@ -32,7 +32,7 @@
 #define WATER_LEVEL_INFO_UPDATE_INTERVAL    10 //seconds
 #define DISPLAY_SLEEP_TIMEOUT               10 //seconds without interaction to turn off display
 #define DEEP_SLEEP_TIMEOUT                  60 //seconds without interaction to start deep sleep
-#define DEEP_SLEEP_WAKEUP                  600 //seconds of deep sleeping for device to wake up
+#define DEEP_SLEEP_WAKEUP                 1800 //seconds of deep sleeping for device to wake up
 
 enum MENUS { INSTRUCTIONS, WATER_LEVEL, WIFI_SCAN, BATTERY_INFO, DEEP_SLEEP };
 struct {
