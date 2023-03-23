@@ -1,8 +1,4 @@
-#ifdef CORE_DEBUG_LEVEL
-#undef CORE_DEBUG_LEVEL
-#endif
-#define CORE_DEBUG_LEVEL 3
-#define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
+#include "Log.h"
 #include <Arduino.h>
 #include <stdio.h>
 #include <SPIFFS.h>
@@ -24,7 +20,7 @@
 #define BUTTON_LEFT                          0
 #define TIME_STRING_LENGTH                 100 
 #define MINIMUM_TIME_LONG_CLICK            200 //ms
-#define MQTT_MAX_PACKET_SIZE_              1024
+#define MQTT_MAX_PACKET_SIZE_              2048
 #define DOMOTICZ_TOPIC_SEND                "domoticz/in"
 #define DOMOTICZ_TOPIC_LAST_WILL           "domoticz/in/lastwill"
 #define DOMOTICZ_TOPIC_LOG                 "domoticz/in/log"
@@ -37,10 +33,6 @@
 #define DISPLAY_SLEEP_TIMEOUT               10 //seconds without interaction to turn off display
 #define DEEP_SLEEP_TIMEOUT                  60 //seconds without interaction to start deep sleep
 #define DEEP_SLEEP_WAKEUP                  600 //seconds of deep sleeping for device to wake up
-#define LOG_FILENAME                       "/LOGS.txt"
-#define LOG_TAG                            "ESP32"
-#define LOGE(a, ...) logE(a, ##__VA_ARGS__)
-#define LOGI(a, ...) logI(a, ##__VA_ARGS__)
 
 enum MENUS { INSTRUCTIONS, WATER_LEVEL, WIFI_SCAN, BATTERY_INFO, DEEP_SLEEP };
 struct {
@@ -101,10 +93,6 @@ NTPTime ntpTime = NTPTime();
 
 EspMQTTClient client = EspMQTTClient();
 
-static char log_print_buffer[512];
-static char log_read_buffer[MQTT_MAX_PACKET_SIZE_];
-static char log_write_buffer[MQTT_MAX_PACKET_SIZE_];
-
 void SPIFFSInit() {
   if (!SPIFFS.begin(true)) {
     Serial.println("An Error has occurred while mounting SPIFFS");
@@ -112,87 +100,9 @@ void SPIFFSInit() {
   }
 }
 
-int vprintf_into_spiffs(const char* szFormat, va_list args) {
-  Serial.println("vprintf_into_spiffs"); 
-	//write evaluated format string into buffer
-	int ret = vsnprintf(log_write_buffer, sizeof(log_write_buffer), szFormat, args);
-
-	//output is now in buffer. write to file.
-	if(ret >= 0) {
-    if(!SPIFFS.exists(LOG_FILENAME)) {
-      File writeLog = SPIFFS.open(LOG_FILENAME, FILE_WRITE);
-      if(!writeLog) Serial.println("Couldn't open log file"); 
-      delay(50);
-      writeLog.close();
-    }
-    
-		File spiffsLogFile = SPIFFS.open(LOG_FILENAME, FILE_APPEND);
-		//debug output
-		printf("[Writing to SPIFFS] %.*s", ret, log_write_buffer);
-		spiffsLogFile.write((uint8_t*) log_write_buffer, (size_t) ret);
-		//to be safe in case of crashes: flush the output
-		spiffsLogFile.flush();
-		spiffsLogFile.close();
-	}
-	return ret;
-}
-
-void logE(const char* format, ...) {
-  va_list args;
-  va_start(args, format);
-  va_end(args);
-
-  vsnprintf(log_print_buffer, sizeof(log_print_buffer), format, args);
-  log_d("[%s] ", log_print_buffer, LOG_TAG);
-  esp_log_write(ESP_LOG_DEBUG, LOG_TAG, log_print_buffer);
-}
-void logI(const char* format, ...) {
-  va_list args;
-  va_start(args, format);
-  va_end(args);
-  
-  vsnprintf(log_print_buffer, sizeof(log_print_buffer), format, args);
-  log_i("[%s] ", log_print_buffer, LOG_TAG);
-  esp_log_write(ESP_LOG_INFO, LOG_TAG, log_print_buffer);
-}
-
-void logInit() {
-  esp_log_set_vprintf(&vprintf_into_spiffs);
-  // esp_log_level_set(LOG_TAG, ESP_LOG_VERBOSE);
-  LOGI("Log initiated");
-}
-
-void readLogFile() {
-  SPIFFSInit();
-  File logFile = SPIFFS.open(LOG_FILENAME);
-  if(!logFile){
-    Serial.println("Failed to open log file for reading");
-    LOGE("Failed to open log file for reading");
-    return;
-  }
-
-  // char* pBuffer;
-  // unsigned int fileSize = logFile.size();
-  // pBuffer = (char*)malloc(fileSize + 1);
-  // logFile.read((uint8_t*)log_read_buffer, fileSize);
-  logFile.read((uint8_t*)log_read_buffer, MQTT_MAX_PACKET_SIZE_);
-  // Serial.println("Log file content:");
-  // Serial.println(log_read_buffer);
-  // pBuffer[fileSize] = '\0';
-  
-  // free(pBuffer);
-
-  logFile.close();
-}
-
-void truncateLogFile() {
-  SPIFFSInit();
-  SPIFFS.remove(LOG_FILENAME);
-}
-
 void publishLogContent() {
-  readLogFile();
-  client.publish(DOMOTICZ_TOPIC_LOG, log_read_buffer);
+  char* jsonStr = Log::readLogFileAsJsonPretty();
+  client.publish(DOMOTICZ_TOPIC_LOG, jsonStr);
 }
 
 void serialInit() {
@@ -219,7 +129,7 @@ void espDelay(int ms)
   esp_light_sleep_start();
 }
 void taskDelay(int ms) {
-  vTaskDelay(ms);
+  vTaskDelay(ms / portTICK_PERIOD_MS);
 }
 void showInstructions() {
   tft.setTextDatum(MC_DATUM);
@@ -403,7 +313,7 @@ void publishWaterLevelInfo(int waterLevel) {
   client.publish(DOMOTICZ_TOPIC_SEND, String(waterLevelBuff));
 }
 void printWaterLevelInfo() {
-  if (eTaskGetState(waterLevelTaskHandle) == eSuspended) {
+  if (waterLevelTaskHandle != NULL && eTaskGetState(waterLevelTaskHandle) == eSuspended) {
     LOGI("printWaterLevelInfo(): task is suspended");
     return;
   }
@@ -443,7 +353,7 @@ void water_level_task(void *arg) {
   }
 }
 void createWaterLevelTask() {
-  xTaskCreate(water_level_task, "water_level_task", 2048, NULL, tskIDLE_PRIORITY, &waterLevelTaskHandle);
+  xTaskCreate(water_level_task, "water_level_task", 10000, NULL, tskIDLE_PRIORITY, &waterLevelTaskHandle);
 }
 
 void publishBatteryInfo(int batteryChargeLevel, double batteryVoltage) {
@@ -459,7 +369,7 @@ void publishBatteryInfo(int batteryChargeLevel, double batteryVoltage) {
   client.publish(DOMOTICZ_TOPIC_SEND, String(chargeBuff));
 }
 void printBatteryInfo() {
-  if (eTaskGetState(batteryInfoTaskHandle) == eSuspended) {
+  if (batteryInfoTaskHandle != NULL && eTaskGetState(batteryInfoTaskHandle) == eSuspended) {
     LOGI("printBatteryInfo(): task is suspended");
     return;
   }
@@ -546,7 +456,7 @@ void createBatteryInfoTask() {
     return;
   }
   LOGI("Creating batteryInfo task ");
-  xTaskCreate(battery_info_task, "battery_info_task", 2048, NULL, tskIDLE_PRIORITY, &batteryInfoTaskHandle);
+  xTaskCreate(battery_info_task, "battery_info_task", 10000, NULL, tskIDLE_PRIORITY, &batteryInfoTaskHandle);
 }
 void resumeBatteryInfoTask() {
   if (batteryInfoTaskHandle == NULL) {
@@ -559,7 +469,6 @@ void resumeBatteryInfoTask() {
 
 void update_display_task(void *arg) {
   while(true) {
-    // Serial.println("update_display_task loop");
     printTime();
     switch (myMenuInfo.activeMenu) {
       case BATTERY_INFO:
@@ -579,7 +488,7 @@ void update_display_task(void *arg) {
   }
 }
 void createUpdateDisplayTask() {
-  xTaskCreate(update_display_task, "update_display_task", 2048, NULL, tskIDLE_PRIORITY, &updateDisplayTaskHandle);
+  xTaskCreate(update_display_task, "update_display_task", 10000, NULL, tskIDLE_PRIORITY, &updateDisplayTaskHandle);
 }
 
 void pinoutInit() {
@@ -662,7 +571,6 @@ void onConnectionEstablished()
   ntpTime.setTime();
 
   client.subscribe(DOMOTICZ_TOPIC_REQUEST_LOG, [](const String& payload) {
-    Serial.println("Log request message received");
     LOGI("Log request message received");
     publishLogContent();
   });
@@ -692,6 +600,33 @@ boolean validateLongClick(Button2 &b) {
 }
 void button_init()
 {
+  leftButton.setLongClickHandler([](Button2 & b) {
+    if (!isDisplayActive()) {
+      wakeUpDisplay();
+      return;
+    }
+    resetSleepTimers();
+    if (!validateLongClick(b)) return;
+    LOGI("Left button long click");
+    LOGI("Go to Scan WIFI...");
+    changeMenuOption(WIFI_SCAN);
+    wifi_scan();
+  });
+  leftButton.setClickHandler([](Button2 & b) {
+    if (!isDisplayActive()) {
+      wakeUpDisplay();
+      return;
+    }
+    resetSleepTimers();
+    LOGI("Left button press");
+    LOGI("Go to Water Level info..");
+    changeMenuOption(WATER_LEVEL);
+  });
+  leftButton.setDoubleClickHandler([](Button2 & b) {
+    Serial.println("Truncating log file");
+    Log::truncateLogFile();
+  });
+
   rightButton.setLongClickHandler([](Button2 & b) {
     if (!isDisplayActive()) {
       wakeUpDisplay();
@@ -717,32 +652,9 @@ void button_init()
     LOGI("Go to Battery info..");
     changeMenuOption(BATTERY_INFO);
   });
-
-  leftButton.setLongClickHandler([](Button2 & b) {
-    if (!isDisplayActive()) {
-      wakeUpDisplay();
-      return;
-    }
-    resetSleepTimers();
-    if (!validateLongClick(b)) return;
-    LOGI("Left button long click");
-    LOGI("Go to Scan WIFI...");
-    changeMenuOption(WIFI_SCAN);
-    wifi_scan();
-  });
-  leftButton.setClickHandler([](Button2 & b) {
-    if (!isDisplayActive()) {
-      wakeUpDisplay();
-      return;
-    }
-    resetSleepTimers();
-    LOGI("Left button press");
-    LOGI("Go to Water Level info..");
-    changeMenuOption(WATER_LEVEL);
-  });
-  leftButton.setDoubleClickHandler([](Button2 & b) {
-    Serial.println("Truncating log file");
-    truncateLogFile();
+  rightButton.setDoubleClickHandler([](Button2 & b) {
+    LOGI("Publishing log file");
+    publishLogContent();
   });
 }
 void button_loop()
@@ -756,9 +668,8 @@ void loadAppConfig() {
 }
 
 void setup() {
-  SPIFFSInit();
   serialInit();
-  logInit();
+  SPIFFSInit();
   displayInit();
   printBootCount();
   printWakeupReason();

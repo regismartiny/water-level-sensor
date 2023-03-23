@@ -1,4 +1,5 @@
 #include "AppConfig.h"
+#include "Log.h"
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
 
@@ -14,14 +15,15 @@ AppConfig::AppConfig(Config *config) {
 }
 
 AppConfig::~AppConfig() {
+  LOGI("AppConfig destructor called");
 }
 
 void AppConfig::listFiles() {
   File root = SPIFFS.open("/");
   File file_ = root.openNextFile();
   while(file_){
-    Serial.print("FILE: ");
-    Serial.println(file_.name());
+    LOGI("FILE: ");
+    LOGI(file_.name());
 
     file_ = root.openNextFile();
   }
@@ -29,30 +31,29 @@ void AppConfig::listFiles() {
 
 bool AppConfig::loadJsonConfig()
 {
-  Serial.println("Loading JSON config");
+  LOGI("Loading JSON config");
 
   if(!SPIFFS.begin(true)){
-    Serial.println("An Error has occurred while mounting SPIFFS");
+    LOGE("An Error has occurred while mounting SPIFFS");
     return false;
   }
 
   //listFiles();
 
-  Serial.printf("Reading file: %s\n", filePath);
+  LOGI("Reading file: %s\n", filePath);
   File file = SPIFFS.open(filePath, FILE_READ);
   if(!file){
-    Serial.println("There was an error opening the file");
+    LOGI("There was an error opening the file");
     return false;
   }
 
   auto err = deserializeJson(json_doc, file);
-  // SPIFFS.end();
   if(err) {
-    Serial.printf("Unable to deserialize JSON to JsonDocument: %s\n", err.c_str() );
+    LOGE("Unable to deserialize JSON to JsonDocument: %s\n", err.c_str() );
     return false;
   }
 
-  serializeJson(json_doc, Serial); //print config to serial
+  // serializeJson(json_doc, Serial); //print config to serial
 
   // Copy values from the JsonDocument to the Config
   strlcpy(config->wifiSSID, json_doc["wifi"]["ssid"], sizeof(config->wifiSSID));
