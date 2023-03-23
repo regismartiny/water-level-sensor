@@ -261,7 +261,7 @@ void display_sleep_task(void *args) {
   }
 }
 void createDisplaySleepTask() {
-  xTaskCreate(display_sleep_task, "display_sleep_task", 2048, NULL, tskIDLE_PRIORITY, &displaySleepTaskHandle);
+  xTaskCreate(display_sleep_task, "display_sleep_task", 10000, NULL, tskIDLE_PRIORITY, &displaySleepTaskHandle);
 }
 
 void printTime() {
