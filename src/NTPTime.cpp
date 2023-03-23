@@ -1,5 +1,6 @@
 #include "NTPTime.h"
 #include <ESP32Time.h>
+#include "Log.h"
 
 NTPTime::NTPTime() {
    this->rtc = ESP32Time(this->gmtOffset_sec);
@@ -22,24 +23,31 @@ void NTPTime::setTime() {
   struct tm timeinfo;
   if (getLocalTime(&timeinfo)){
     rtc.setTimeStruct(timeinfo);
-    Serial.println("Time received from NTP");
-    Serial.printf("year: %d\n", 1900 + timeinfo.tm_year);
-    Serial.printf("month: %d\n", 1 + timeinfo.tm_mon);
-    Serial.printf("month day: %d\n", timeinfo.tm_mday);
-    Serial.printf("week day: %c%c\n", "SMTWTFS"[timeinfo.tm_wday], "uouehra"[timeinfo.tm_wday]);
-    Serial.printf("year day: %d\n", 1 + timeinfo.tm_yday);
-    Serial.printf("hour: %d\n", timeinfo.tm_hour);
-    Serial.printf("minute: %d\n", timeinfo.tm_min);
-    Serial.printf("second: %d\n", timeinfo.tm_sec);
+    // "uouehra"[timeinfo.tm_wday]
+    char timeStr[30];
+    getTimeStringExpanded(timeStr, 30);
+    LOGI("Time received from NTP server: %s", timeStr);
   } else {
-    Serial.println("Error getting time from NTP");
+    LOGE("Error getting time from NTP server");
   }
 }
 
 void NTPTime::getTimeString(char* outStr, int length) {
+  struct tm *t_st = getCurrentLocalTime();
+  const char *formatStr = "%02d/%02d/%02d %02d:%02d:%02d";
+  snprintf(outStr, length, formatStr, t_st->tm_mday, 1 + t_st->tm_mon, 
+    abs(1900 + t_st->tm_year - 2000), t_st->tm_hour, t_st->tm_min, t_st->tm_sec);
+}
+
+void NTPTime::getTimeStringExpanded(char* outStr, int length) {
+  struct tm *t_st = getCurrentLocalTime();
+  const char *formatStr = "%s, %02d/%02d/%02d %02d:%02d:%02d";
+  snprintf(outStr, length, formatStr, daysOfWeek[t_st->tm_wday], t_st->tm_mday, 1 + t_st->tm_mon, 
+    abs(1900 + t_st->tm_year - 2000), t_st->tm_hour, t_st->tm_min, t_st->tm_sec);
+}
+
+tm * NTPTime::getCurrentLocalTime() {
   time_t t = time(NULL);
   struct tm *t_st;
-  t_st = localtime(&t);
-  snprintf(outStr, length, "%02d/%02d/%02d %02d:%02d:%02d", t_st->tm_mday, 1 + t_st->tm_mon, 
-  abs(1900 + t_st->tm_year - 2000), t_st->tm_hour, t_st->tm_min, t_st->tm_sec);
+  return localtime(&t);
 }
