@@ -568,7 +568,7 @@ void mqttInit()
 // WARNING : YOU MUST IMPLEMENT IT IF YOU USE EspMQTTClient
 void onConnectionEstablished()
 {
-  ntpTime.setTime();
+  ntpTime.updateTime();
 
   client.subscribe(DOMOTICZ_TOPIC_REQUEST_LOG, [](const String& payload) {
     LOGI("Log request message received");

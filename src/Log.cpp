@@ -28,7 +28,7 @@ void Log::saveLog(char* msg, int size) {
    // Serial.println("saveLog()");
    if(size >= 0) {
       if(!SPIFFS.exists(LOG_FILENAME)) {
-         File writeLog = SPIFFS.open(LOG_FILENAME, FILE_WRITE);
+         File writeLog = SPIFFS.open(LOG_FILENAME, FILE_WRITE, true);
          if(!writeLog) {
             Serial.println("Couldn't open log file");
          }

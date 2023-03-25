@@ -17,8 +17,8 @@ NTPTime::~NTPTime() {
   delete &rtc;
 }
 
-void NTPTime::setTime() {
-  /*---------set Time with NTP---------------*/
+void NTPTime::updateTime() {
+  /*---------update Time with NTP server---------------*/
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   struct tm timeinfo;
   if (getLocalTime(&timeinfo)){
