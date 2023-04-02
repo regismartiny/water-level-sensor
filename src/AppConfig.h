@@ -10,6 +10,7 @@ struct Config {
   int mqttPort;
   char mqttUser[64];
   char mqttPassword[64];
+  char espNowGatewayMacAddress[18];
 };
 
 class AppConfig {

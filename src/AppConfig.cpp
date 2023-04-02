@@ -63,6 +63,7 @@ bool AppConfig::loadJsonConfig()
   config->mqttPort = (int)json_doc["mqtt"]["port"];
   strlcpy(config->mqttUser, json_doc["mqtt"]["user"], sizeof(config->mqttUser));
   strlcpy(config->mqttPassword, json_doc["mqtt"]["password"], sizeof(config->mqttPassword));
+  strlcpy(config->espNowGatewayMacAddress, json_doc["espnow"]["gatewayMacAddress"], sizeof(config->espNowGatewayMacAddress));
   
   return true;
 }

@@ -5,10 +5,10 @@
 #include <TFT_eSPI.h>
 #include <Battery18650Stats.h>
 #include "Button2.h"
-#include "WiFi.h"
-#include "EspMQTTClient.h"
 #include "AppConfig.h"
 #include "NTPTime.h"
+#include "ESPNow.h"
+#include <WiFi.h>
 
 #define ADC_EN                              14 //ADC_EN is the ADC detection enable port
 #define ADC_PIN                             34
@@ -20,11 +20,6 @@
 #define BUTTON_LEFT                          0
 #define TIME_STRING_LENGTH                 100 
 #define MINIMUM_TIME_LONG_CLICK            200 //ms
-#define MQTT_MAX_PACKET_SIZE_              2048
-#define DOMOTICZ_TOPIC_SEND                "domoticz/in"
-#define DOMOTICZ_TOPIC_LAST_WILL           "domoticz/in/lastwill"
-#define DOMOTICZ_TOPIC_LOG                 "domoticz/in/log"
-#define DOMOTICZ_TOPIC_REQUEST_LOG         "domoticz/out/log"
 #define DOMOTICZ_VOLTAGE_DEVICE_ID           6
 #define DOMOTICZ_CHARGE_DEVICE_ID            7
 #define BATTERY_INFO_UPDATE_INTERVAL        10 //seconds
@@ -91,7 +86,7 @@ AppConfig myAppConfig = AppConfig(&myConfig);
 TaskHandle_t updateTimeTaskHandle;
 NTPTime ntpTime = NTPTime();
 
-EspMQTTClient client = EspMQTTClient();
+ESPNow espNow = ESPNow();
 
 void SPIFFSInit() {
   if (!SPIFFS.begin(true)) {
@@ -100,9 +95,14 @@ void SPIFFSInit() {
   }
 }
 
+// ESPNow callback when data is sent
+void ESPNow_OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  espNow.onDataSent(mac_addr, status);
+}
+
 void publishLogContent() {
   char* jsonStr = Log::readLogFileAsJsonPretty();
-  client.publish(DOMOTICZ_TOPIC_LOG, jsonStr);
+  espNow.sendMessage(std::string(jsonStr), LOG);
 }
 
 void serialInit() {
@@ -304,13 +304,9 @@ void resumeUpdateTimeTask() {
 }
 
 void publishWaterLevelInfo(int waterLevel) {
-  if (!client.isConnected()) {
-    LOGE("publishWaterLevelInfo(): MQTT client is not connected.");
-    return;
-  }
   char waterLevelBuff[100];
   snprintf(waterLevelBuff, 100, "{\"idx\": %d, \"nvalue\": %d}", DOMOTICZ_WATER_LEVEL_DEVICE_ID, waterLevel);
-  client.publish(DOMOTICZ_TOPIC_SEND, String(waterLevelBuff));
+  espNow.sendMessage(std::string(waterLevelBuff), SENSOR_INFO);
 }
 void printWaterLevelInfo() {
   if (waterLevelTaskHandle != NULL && eTaskGetState(waterLevelTaskHandle) == eSuspended) {
@@ -357,16 +353,12 @@ void createWaterLevelTask() {
 }
 
 void publishBatteryInfo(int batteryChargeLevel, double batteryVoltage) {
-  if (!client.isConnected()) {
-    LOGI("publishBatteryInfo(): MQTT client is not connected.");
-    return;
-  }
   char voltageBuff[100];
   char chargeBuff[100];
   snprintf(voltageBuff, 100, "{\"idx\": %d, \"nvalue\": 0, \"svalue\": \"%0.2f\"}", DOMOTICZ_VOLTAGE_DEVICE_ID, batteryVoltage);
   snprintf(chargeBuff, 100, "{\"idx\": %d, \"nvalue\": 0, \"svalue\": \"%d\"}", DOMOTICZ_CHARGE_DEVICE_ID, batteryChargeLevel);
-  client.publish(DOMOTICZ_TOPIC_SEND, String(voltageBuff));
-  client.publish(DOMOTICZ_TOPIC_SEND, String(chargeBuff));
+  espNow.sendMessage(std::string(voltageBuff), SENSOR_INFO);
+  espNow.sendMessage(std::string(chargeBuff), SENSOR_INFO);
 }
 void printBatteryInfo() {
   if (batteryInfoTaskHandle != NULL && eTaskGetState(batteryInfoTaskHandle) == eSuspended) {
@@ -444,7 +436,7 @@ void battery_info_task(void *arg) {
 }
 void suspendBatteryInfoTask() {
   if (batteryInfoTaskHandle == NULL) {
-    Serial.println("BatteryInfoTask not yet created");
+    Serial.println("suspendBatteryInfoTask(): batteryInfoTask not yet created");
     return;
   }
   LOGI("Suspending batteryInfo task");
@@ -452,7 +444,7 @@ void suspendBatteryInfoTask() {
 }
 void createBatteryInfoTask() {
   if (batteryInfoTaskHandle != NULL) {
-    Serial.println("BatteryInfoTask already created");
+    Serial.println("createBatteryInfoTask(): batteryInfoTask already created");
     return;
   }
   LOGI("Creating batteryInfo task ");
@@ -499,35 +491,35 @@ void pinoutInit() {
 
 void wifi_scan()
 {
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextSize(1);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(1);
 
-    tft.drawString("Scan Network", tft.width() / 2, tft.height() / 2, 2);
+  tft.drawString("Scan Network", tft.width() / 2, tft.height() / 2, 2);
 
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-    delay(100);
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
 
-    int16_t n = WiFi.scanNetworks();
-    tft.setTextDatum(MC_DATUM);
-    tft.fillScreen(TFT_BLACK);
-    if (n == 0) {
-        tft.drawString("no networks found", tft.width() / 2, tft.height() / 2);
-    } else {
-        tft.setCursor(0, 30);
-        Serial.printf("Found %d net\n", n);
-        for (int i = 0; i < n; ++i) {
-            sprintf(wifiNetworksBuff,
-                    "[%d]:%s(%d)",
-                    i + 1,
-                    WiFi.SSID(i).c_str(),
-                    WiFi.RSSI(i));
-            tft.println(wifiNetworksBuff);
-        }
-    }
-    // WiFi.mode(WIFI_OFF);
+  int16_t n = WiFi.scanNetworks();
+  tft.setTextDatum(MC_DATUM);
+  tft.fillScreen(TFT_BLACK);
+  if (n == 0) {
+      tft.drawString("no networks found", tft.width() / 2, tft.height() / 2);
+  } else {
+      tft.setCursor(0, 30);
+      Serial.printf("Found %d net\n", n);
+      for (int i = 0; i < n; ++i) {
+          sprintf(wifiNetworksBuff,
+                  "[%d]:%s(%d)",
+                  i + 1,
+                  WiFi.SSID(i).c_str(),
+                  WiFi.RSSI(i));
+          tft.println(wifiNetworksBuff);
+      }
+  }
+  // WiFi.mode(WIFI_OFF);
 }
 
 void connectWifi() {
@@ -550,42 +542,6 @@ void connectWifi() {
   tft.drawString("Connected to " + String(myConfig.wifiSSID), tft.width() / 2, tft.height() / 2);
   tft.drawString("IP: " + WiFi.localIP().toString(), tft.width() / 2, tft.height() / 2 + 50);
   Serial.println(WiFi.localIP());
-}
-
-void mqttInit()
-{
-  client.setMqttClientName(myConfig.mqttClientName);
-  client.setMqttServer(myConfig.mqttServer, myConfig.mqttUser, myConfig.mqttPassword, myConfig.mqttPort);
-  client.setWifiCredentials(myConfig.wifiSSID, myConfig.wifiPassword);
-  // Optional functionalities of EspMQTTClient
-  client.enableDebuggingMessages(); // Enable debugging messages sent to serial output
-  client.enableHTTPWebUpdater(); // Enable the web updater. User and password default to values of MQTTUsername and MQTTPassword. These can be overridded with enableHTTPWebUpdater("user", "password").
-  client.enableOTA(); // Enable OTA (Over The Air) updates. Password defaults to MQTTPassword. Port is the default OTA port. Can be overridden with enableOTA("password", port).
-  client.enableLastWillMessage(DOMOTICZ_TOPIC_LAST_WILL, "going offline");  // You can activate the retain flag by setting the third parameter to true
-  client.setMaxPacketSize(MQTT_MAX_PACKET_SIZE_);
-}
-// This function is called once everything is connected (Wifi and MQTT)
-// WARNING : YOU MUST IMPLEMENT IT IF YOU USE EspMQTTClient
-void onConnectionEstablished()
-{
-  ntpTime.updateTime();
-
-  client.subscribe(DOMOTICZ_TOPIC_REQUEST_LOG, [](const String& payload) {
-    LOGI("Log request message received");
-    publishLogContent();
-  });
-
-  // Subscribe to "mytopic/wildcardtest/#" and display received message to Serial
-  // client.subscribe("domoticz/out/#", [](const String & topic, const String & payload) {
-  //   Serial.println("(From wildcard) topic: " + topic + ", payload: " + payload);
-  // });
-
-  client.publish("domoticz/in/test", "This is a message from WaterLevelSensor"); // You can activate the retain flag by setting the third parameter to true
-
-  // Execute delayed instructions
-  // client.executeDelayed(5 * 1000, []() {
-  //   client.publish("domoticz/out/test123", "This is a message from WaterLevelSensor sent 5 seconds later");
-  // });
 }
 
 boolean validateLongClick(Button2 &b) {
@@ -677,7 +633,7 @@ void setup() {
   pinoutInit();
   changeMenuOption(INSTRUCTIONS);
   button_init();
-  mqttInit();
+  espNow.init(myConfig.espNowGatewayMacAddress);
   createTimeTask();
   createWaterLevelTask();
   createBatteryInfoTask();
@@ -687,6 +643,5 @@ void setup() {
 
 void loop() {
   button_loop();
-  client.loop();
 }
 

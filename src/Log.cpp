@@ -18,6 +18,7 @@ void Log::SPIFFSInit() {
       Serial.println("An Error has occurred while mounting SPIFFS");
       return;
    }
+   delay(50);
 }
 
 void Log::logInit() {
