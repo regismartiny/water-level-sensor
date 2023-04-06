@@ -8,7 +8,8 @@
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG
 
 #include <Arduino.h>
-#define LOG_FILENAME "/LOGS.txt"
+#define LOG_DIRECTORY "/logs"
+#define LOG_FILEPATH "/logs/log.txt"
 #define LOG_TAG "MAIN"
 #define LOGE(a, ...) Log::logE(a, ##__VA_ARGS__)
 #define LOGI(a, ...) Log::logI(a, ##__VA_ARGS__)
@@ -24,14 +25,16 @@ class Log {
    public:
       Log();
       ~Log();
+      static void init();
       static void logE(const char* format, ...);
       static void logI(const char* format, ...);
       static char* readLogFile();
       static char* readLogFileAsJsonPretty();
       static void truncateLogFile();
    private:
-      static void SPIFFSInit();
-      static void logInit();
+      static void LittleFSInit();
+      static void createDirIfNotExists(const char * path);
+      static void createLogFileIfNotExists(const char * path);
       static void log(const char* format, esp_log_level_t logLevel, va_list args);
       static void saveLog(char* log_print_buffer, int size);
 };

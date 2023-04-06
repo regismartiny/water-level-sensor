@@ -1,7 +1,17 @@
 #include "AppConfig.h"
 #include "Log.h"
-#include <SPIFFS.h>
 #include <ArduinoJson.h>
+
+#define USE_LittleFS
+
+#include <FS.h>
+#ifdef USE_LittleFS
+  #define SPIFFS LITTLEFS
+  #include <LITTLEFS.h> 
+  #define FORMAT_LITTLEFS_IF_FAILED true
+#else
+  #include <SPIFFS.h>
+#endif
 
 AppConfig::AppConfig() {
   filePath = DEFAULT_CONFIG_FILE_PATH;
@@ -19,7 +29,7 @@ AppConfig::~AppConfig() {
 }
 
 void AppConfig::listFiles() {
-  File root = SPIFFS.open("/");
+  File root = LittleFS.open("/");
   File file_ = root.openNextFile();
   while(file_){
     LOGI("FILE: ");
@@ -33,15 +43,15 @@ bool AppConfig::loadJsonConfig()
 {
   LOGI("Loading JSON config");
 
-  if(!SPIFFS.begin(true)){
-    LOGE("An Error has occurred while mounting SPIFFS");
+  if(!LittleFS.begin(true)){
+    LOGE("An Error has occurred while mounting LittleFS");
     return false;
   }
 
   //listFiles();
 
-  LOGI("Reading file: %s\n", filePath);
-  File file = SPIFFS.open(filePath, FILE_READ);
+  LOGI("Reading file: %s", filePath);
+  File file = LittleFS.open(filePath, FILE_READ);
   if(!file){
     LOGI("There was an error opening the file");
     return false;
@@ -49,7 +59,7 @@ bool AppConfig::loadJsonConfig()
 
   auto err = deserializeJson(json_doc, file);
   if(err) {
-    LOGE("Unable to deserialize JSON to JsonDocument: %s\n", err.c_str() );
+    LOGE("Unable to deserialize JSON to JsonDocument: %s", err.c_str() );
     return false;
   }
 

@@ -1,50 +1,77 @@
 #include "Log.h"
-#include <SPIFFS.h>
 #include <ArduinoJson.h>
+#define USE_LittleFS
+
+#include <FS.h>
+#ifdef USE_LittleFS
+  #define SPIFFS LITTLEFS
+  #include <LITTLEFS.h> 
+  #define FORMAT_LITTLEFS_IF_FAILED true
+#else
+  #include <SPIFFS.h>
+#endif
+
+#define FORMAT_LITTLEFS_IF_FAILED true
 
 char EMPTY_STRING[1] = "";
 
 Log::Log() {
-   SPIFFSInit();
-   logInit();
+   Serial.println("Log constructor called");
 }
 
 Log::~Log() {
    Serial.println("Log destructor called");
 }
 
-void Log::SPIFFSInit() {
-   if (!SPIFFS.begin(true)) {
-      Serial.println("An Error has occurred while mounting SPIFFS");
+void Log::LittleFSInit() {
+   if(!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)){
+      Serial.println("LITTLEFS Mount Failed");
       return;
    }
    delay(50);
 }
 
-void Log::logInit() {
+void Log::createDirIfNotExists(const char * path){
+   if(LittleFS.exists(path)) return;
+   Serial.printf("Creating Dir: %s\n", path);
+   if(LittleFS.mkdir(path)){
+      Serial.println("Dir created");
+   } else {
+      Serial.println("Dir creation failed");
+   }
+}
+
+void Log::createLogFileIfNotExists(const char * path){
+   if(LittleFS.exists(path)) return;
+   Serial.println("Log file not found. Creating file");
+   File writeLog = LittleFS.open(LOG_FILEPATH, FILE_WRITE);
+   if(!writeLog) {
+      Serial.println("Log file creation failed");
+      return;
+   }
+   delay(50);
+   writeLog.close();
+   Serial.println("Log file created");
+}
+
+void Log::init() {
+   LittleFSInit();
+   createDirIfNotExists(LOG_DIRECTORY);
+   createLogFileIfNotExists(LOG_FILEPATH);
    Serial.println("Log initiated");
 }
 
 void Log::saveLog(char* msg, int size) {
    // Serial.println("saveLog()");
-   if(size >= 0) {
-      if(!SPIFFS.exists(LOG_FILENAME)) {
-         File writeLog = SPIFFS.open(LOG_FILENAME, FILE_WRITE, true);
-         if(!writeLog) {
-            Serial.println("Couldn't open log file");
-         }
-         delay(50);
-         writeLog.close();
-      }
-      
-      File spiffsLogFile = SPIFFS.open(LOG_FILENAME, FILE_APPEND);
+   if(size >= 0) {      
+      File logFile = LittleFS.open(LOG_FILEPATH, FILE_APPEND);
       //debug output
-      // Serial.printf("[Writing to SPIFFS] %d, %s\n", size, msg);
-      spiffsLogFile.write((uint8_t*) msg, (size_t) size);
-      spiffsLogFile.write((uint8_t*) "\n", (size_t) 1);
+      // Serial.printf("[Writing to LittleFS] %d, %s\n", size, msg);
+      logFile.write((uint8_t*) msg, (size_t) size);
+      logFile.write((uint8_t*) "\n", (size_t) 1);
       //to be safe in case of crashes: flush the output
-      spiffsLogFile.flush();
-      spiffsLogFile.close();
+      logFile.flush();
+      logFile.close();
    }
 }
 
@@ -83,9 +110,8 @@ void Log::logI(const char* format, ...) {
 
 char* Log::readLogFile() {
    // Serial.printf("readLogFile()");
-   File logFile = SPIFFS.open(LOG_FILENAME);
+   File logFile = LittleFS.open(LOG_FILEPATH);
    if(!logFile){
-      // Serial.println("Failed to open log file for reading");
       LOGE("Failed to open log file for reading");
       return EMPTY_STRING;
    }
@@ -114,5 +140,5 @@ char* Log::readLogFileAsJsonPretty() {
 }
 
 void Log::truncateLogFile() {
-   SPIFFS.remove(LOG_FILENAME);
+   LittleFS.remove(LOG_FILEPATH);
 }

@@ -1,7 +1,6 @@
 #include "Log.h"
 #include <Arduino.h>
 #include <stdio.h>
-#include <SPIFFS.h>
 #include <TFT_eSPI.h>
 #include <Battery18650Stats.h>
 #include "Button2.h"
@@ -9,6 +8,16 @@
 #include "NTPTime.h"
 #include "ESPNow.h"
 #include <WiFi.h>
+#define USE_LittleFS
+
+#include <FS.h>
+#ifdef USE_LittleFS
+  #define SPIFFS LITTLEFS
+  #include <LITTLEFS.h> 
+  #define FORMAT_LITTLEFS_IF_FAILED true
+#else
+  #include <SPIFFS.h>
+#endif 
 
 #define ADC_EN                              14 //ADC_EN is the ADC detection enable port
 #define ADC_PIN                             34
@@ -25,8 +34,8 @@
 #define BATTERY_INFO_UPDATE_INTERVAL        10 //seconds
 #define DOMOTICZ_WATER_LEVEL_DEVICE_ID       8
 #define WATER_LEVEL_INFO_UPDATE_INTERVAL    10 //seconds
-#define DISPLAY_SLEEP_TIMEOUT               10 //seconds without interaction to turn off display
-#define DEEP_SLEEP_TIMEOUT                  60 //seconds without interaction to start deep sleep
+#define DISPLAY_SLEEP_TIMEOUT                5 //seconds without interaction to turn off display
+#define DEEP_SLEEP_TIMEOUT                   5 //seconds without interaction to start deep sleep
 #define DEEP_SLEEP_WAKEUP                 1800 //seconds of deep sleeping for device to wake up
 
 enum MENUS { INSTRUCTIONS, WATER_LEVEL, WIFI_SCAN, BATTERY_INFO, DEEP_SLEEP };
@@ -87,13 +96,6 @@ TaskHandle_t updateTimeTaskHandle;
 NTPTime ntpTime = NTPTime();
 
 ESPNow espNow = ESPNow();
-
-void SPIFFSInit() {
-  if (!SPIFFS.begin(true)) {
-    Serial.println("An Error has occurred while mounting SPIFFS");
-    return;
-  }
-}
 
 // ESPNow callback when data is sent
 void ESPNow_OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -461,7 +463,8 @@ void resumeBatteryInfoTask() {
 
 void update_display_task(void *arg) {
   while(true) {
-    printTime();
+    // if (!isDisplayActive() || !tft.availableForWrite()) break;
+    // printTime();
     switch (myMenuInfo.activeMenu) {
       case BATTERY_INFO:
         printBatteryInfo();
@@ -625,7 +628,7 @@ void loadAppConfig() {
 
 void setup() {
   serialInit();
-  SPIFFSInit();
+  Log::init();
   displayInit();
   printBootCount();
   printWakeupReason();
@@ -633,7 +636,7 @@ void setup() {
   pinoutInit();
   changeMenuOption(INSTRUCTIONS);
   button_init();
-  espNow.init(myConfig.espNowGatewayMacAddress);
+  espNow.init(myConfig.espNowGatewayMacAddress, myConfig.wifiSSID);
   createTimeTask();
   createWaterLevelTask();
   createBatteryInfoTask();
