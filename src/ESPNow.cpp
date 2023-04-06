@@ -1,6 +1,7 @@
 #include "ESPNow.h"
 #include <WiFi.h>
 #include "Log.h"
+#include <esp_wifi.h>
 
 ESPNow::ESPNow() {
 }
@@ -25,11 +26,42 @@ void ESPNow::configGatewayMacAddress(const char* gatewayMacAddressString) {
   parseBytes(gatewayMacAddressString, separator, gatewayMacAddress, 6, baseHexadecimal);
 }
 
-void ESPNow::init(char* gatewayMacAddressString) {
-  configGatewayMacAddress(gatewayMacAddressString);
+int32_t ESPNow::getWiFiChannel(const char *ssid) {
+  LOGI("Searching for WiFi with SSID '%s'", ssid);
+  if (int32_t n = WiFi.scanNetworks()) {
+    for (uint8_t i=0; i<n; i++) {
+      if (strcmp(ssid, WiFi.SSID(i).c_str()) == 0) {
+        int32_t wifiChannel = WiFi.channel(i);
+        LOGI("WiFi channel for SSID '%s' found: %d", ssid, wifiChannel);
+        return wifiChannel;
+      }
+    }
+  }
+  LOGE("WiFi channel for SSID '%s' not found!", ssid);
+  return 0;
+}
 
-  // Set device as a Wi-Fi Station
-  WiFi.mode(WIFI_STA);
+void ESPNow::configEspNowChannel(int wifiChannel) {
+  LOGI("Config ESPNow WiFi channel to %d", wifiChannel);
+  esp_wifi_set_channel(wifiChannel, WIFI_SECOND_CHAN_NONE);
+  uint8_t* chan;
+  wifi_second_chan_t* sChan;
+  esp_wifi_get_channel(chan, sChan);
+  LOGI("ESPNow WiFi channel set to %d", wifiChannel);
+}
+
+void ESPNow::configEspNowChannel(const char *wifiSSID) {
+  LOGI("Config ESPNow WiFi channel to channel used by SSID %s", wifiSSID);
+  int32_t wifiChannel = getWiFiChannel(wifiSSID);
+  esp_wifi_set_channel(wifiChannel, WIFI_SECOND_CHAN_NONE);
+  uint8_t* chan;
+  wifi_second_chan_t* sChan;
+  esp_wifi_get_channel(chan, sChan);
+  LOGI("ESPNow WiFi channel set to %d", wifiChannel);
+}
+
+void ESPNow::init(const char* gatewayMacAddressString) {
+  configGatewayMacAddress(gatewayMacAddressString);
 
   // Init ESP-NOW
   if (esp_now_init() != ESP_OK) {
@@ -53,6 +85,24 @@ void ESPNow::init(char* gatewayMacAddressString) {
   }
 }
 
+/**
+ * 
+*/
+void ESPNow::init(const char* gatewayMacAddressString, int wifiChannel) {
+  WiFi.mode(WIFI_STA);
+  configEspNowChannel(wifiChannel);
+  init(gatewayMacAddressString);
+}
+
+/**
+ * 
+*/
+void ESPNow::init(const char* gatewayMacAddressString, const char* wifiSSIDToGetChannelFrom) {
+  WiFi.mode(WIFI_STA);
+  configEspNowChannel(wifiSSIDToGetChannelFrom);
+  init(gatewayMacAddressString);
+}
+
 void ESPNow::send() {
   // Send message via ESP-NOW
   
@@ -66,18 +116,21 @@ void ESPNow::send() {
   }
 }
 
+/**
+ * 
+*/
 void ESPNow::sendMessage(std::string message, msgType messageType) {
   int bufferSize = sizeof(myData.content);
   size_t messageLength = message.length(); //without null termination
 
-  Serial.printf("Content of message being sent has %d bytes.\n", messageLength);
+  LOGI("Content of message being sent has %d bytes", messageLength);
 
   int numberOfParts = 1;
   if (messageLength >= bufferSize) {
     div_t division = std::div(messageLength, bufferSize - 1);
     numberOfParts = division.quot + (division.rem > 0 ? 1 : 0);
   }
-  Serial.printf("Number of parts: %d\n", numberOfParts);
+  LOGI("Number of parts: %d", numberOfParts);
 
   for(int i=0; i < numberOfParts; i++) {
     const char* substring = message.substr(bufferSize*i).c_str();
@@ -92,20 +145,4 @@ void ESPNow::sendMessage(std::string message, msgType messageType) {
 void ESPNow::onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   bool success = status == ESP_NOW_SEND_SUCCESS;
   LOGI("Last Packet Send Confirmation Status: %s", success ? "Success" : "Failed");
-}
-
-void ESPNow::sendTestMessages() {
-
-  // Set values to send
-  char waterLevelBuff[100];
-  snprintf(waterLevelBuff, 100, "{\"idx\": %d, \"nvalue\": %d}", 1, 1);
-  sendMessage(std::string(waterLevelBuff), SENSOR_INFO);
-
-  delay(5000);
-
-  char logBuff[500];
-  snprintf(logBuff, 500, "log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...log info...\n");
-  sendMessage(std::string(logBuff), LOG);
-
-  delay(5000);
 }

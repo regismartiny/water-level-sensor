@@ -26,7 +26,8 @@ class ESPNow {
     public:
         ESPNow();
         ~ESPNow();
-        void init(char* gatewayMacAddressString);
+        void init(const char* gatewayMacAddressString, const char* wifiSSIDToGetChannelFrom);
+        void init(const char* gatewayMacAddressString, int wifiChannel);
         void sendMessage(std::string message, msgType messageType);
         void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
     private:
@@ -36,5 +37,8 @@ class ESPNow {
         void parseBytes(const char* str, char sep, uint8_t* bytes, int maxBytes, int base);
         void configGatewayMacAddress(const char* macAddressString);
         void send();
-        void sendTestMessages();
+        int32_t getWiFiChannel(const char *ssid);
+        void configEspNowChannel(const char *wifiSSID);
+        void configEspNowChannel(int wifiChannel);
+        void init(const char* gatewayMacAddressString);
 };
