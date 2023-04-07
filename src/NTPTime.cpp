@@ -1,5 +1,6 @@
 #include "NTPTime.h"
 #include <ESP32Time.h>
+#include "ESPLogMacros.h"
 
 NTPTime::NTPTime() {
    this->rtc = ESP32Time(this->gmtOffset_sec);

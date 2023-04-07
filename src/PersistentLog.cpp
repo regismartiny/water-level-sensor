@@ -1,5 +1,6 @@
 #include "PersistentLog.h"
 #include <ArduinoJson.h>
+#include "ESPLogMacros.h"
 #define FORMAT_LITTLEFS_IF_FAILED true
 
 char EMPTY_STRING[1] = "";
@@ -53,7 +54,7 @@ void PersistentLog::init() {
    LittleFSInit();
    logger = new ESPLogger(filePath);
    // Set the space reserved to the log (in bytes)
-   logger->setSizeLimit(1000);
+   logger->setSizeLimit(sizeLimit);
    logger->setFlushCallback(flushCallback);
    logger->begin();
    // createLogFileIfNotExists(filePath);

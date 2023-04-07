@@ -2,6 +2,7 @@
 #include "AppConfig.h"
 #include <FS.h>
 #include <LittleFS.h>
+#include "ESPLogMacros.h"
 #define FORMAT_LITTLEFS_IF_FAILED true
 
 AppConfig::AppConfig() {
@@ -23,8 +24,7 @@ void AppConfig::listFiles() {
   File root = LittleFS.open("/");
   File file_ = root.openNextFile();
   while(file_){
-    ESP_LOGI("APPCONFIG", "FILE: ");
-    ESP_LOGI("APPCONFIG", file_.name());
+    ESP_LOGI("APPCONFIG", "FILE: %s", file_.name());
 
     file_ = root.openNextFile();
   }

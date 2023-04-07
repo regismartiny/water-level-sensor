@@ -1,6 +1,7 @@
 #include "ESPNow.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include "ESPLogMacros.h"
 
 ESPNow::ESPNow() {
 }
@@ -97,6 +98,7 @@ void ESPNow::init(const char* gatewayMacAddressString, int wifiChannel) {
  * 
 */
 void ESPNow::init(const char* gatewayMacAddressString, const char* wifiSSIDToGetChannelFrom) {
+  ESP_LOGI("ESPNOW", "Initiating with Gateway: %s, WIFI SSID: %s", gatewayMacAddressString, wifiSSIDToGetChannelFrom);
   WiFi.mode(WIFI_STA);
   configEspNowChannel(wifiSSIDToGetChannelFrom);
   init(gatewayMacAddressString);

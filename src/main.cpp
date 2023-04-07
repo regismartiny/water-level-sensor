@@ -8,6 +8,7 @@
 #include "ESPNow.h"
 #include <WiFi.h>
 #include "PersistentLog.h"
+#include "ESPLogMacros.h"
 
 #define ADC_EN                              14 //ADC_EN is the ADC detection enable port
 #define ADC_PIN                             34
