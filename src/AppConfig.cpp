@@ -1,17 +1,8 @@
-#include "AppConfig.h"
-#include "Log.h"
 #include <ArduinoJson.h>
-
-#define USE_LittleFS
-
+#include "AppConfig.h"
 #include <FS.h>
-#ifdef USE_LittleFS
-  #define SPIFFS LITTLEFS
-  #include <LITTLEFS.h> 
-  #define FORMAT_LITTLEFS_IF_FAILED true
-#else
-  #include <SPIFFS.h>
-#endif
+#include <LittleFS.h>
+#define FORMAT_LITTLEFS_IF_FAILED true
 
 AppConfig::AppConfig() {
   filePath = DEFAULT_CONFIG_FILE_PATH;

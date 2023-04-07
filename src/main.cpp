@@ -1,4 +1,3 @@
-#include "Log.h"
 #include <Arduino.h>
 #include <stdio.h>
 #include <TFT_eSPI.h>
@@ -8,16 +7,7 @@
 #include "NTPTime.h"
 #include "ESPNow.h"
 #include <WiFi.h>
-#define USE_LittleFS
-
-#include <FS.h>
-#ifdef USE_LittleFS
-  #define SPIFFS LITTLEFS
-  #include <LITTLEFS.h> 
-  #define FORMAT_LITTLEFS_IF_FAILED true
-#else
-  #include <SPIFFS.h>
-#endif 
+#include "PersistentLog.h"
 
 #define ADC_EN                              14 //ADC_EN is the ADC detection enable port
 #define ADC_PIN                             34
@@ -89,6 +79,8 @@ Button2 leftButton(BUTTON_LEFT);
 
 char wifiNetworksBuff[512];
 
+PersistentLog persistentLog = PersistentLog();
+
 Config myConfig = Config();
 AppConfig myAppConfig = AppConfig(&myConfig);
 
@@ -103,8 +95,9 @@ void ESPNow_OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 }
 
 void publishLogContent() {
-  char* jsonStr = Log::readLogFileAsJsonPretty();
+  std::string jsonStr = persistentLog.readLogFileAsJsonPretty();
   espNow.sendMessage(std::string(jsonStr), LOG);
+  Serial.printf("Log content: %s\n", jsonStr.c_str());
 }
 
 void serialInit() {
@@ -583,7 +576,7 @@ void button_init()
   });
   leftButton.setDoubleClickHandler([](Button2 & b) {
     ESP_LOGI("MAIN", "Truncating log file");
-    Log::truncateLogFile();
+    persistentLog.truncateLogFile();
   });
 
   rightButton.setLongClickHandler([](Button2 & b) {
@@ -627,13 +620,17 @@ void loadAppConfig() {
 }
 
 int redirectToLittleFS(const char *szFormat, va_list args) {
-  return Log::log(szFormat, args);
+  return persistentLog.log(szFormat, args);
+}
+
+bool logFlushHandler(const char *buffer, int n) {
+  return persistentLog.flushHandler(buffer, n);
 }
 
 void logInit() {
-  esp_log_set_vprintf(redirectToLittleFS);
+  persistentLog.flushCallback = &logFlushHandler;
+  esp_log_set_vprintf(&redirectToLittleFS);
   esp_log_level_set("*", ESP_LOG_VERBOSE);
-  Log::init();
 }
 
 void setup() {

@@ -1,6 +1,5 @@
 #include "ESPNow.h"
 #include <WiFi.h>
-#include "Log.h"
 #include <esp_wifi.h>
 
 ESPNow::ESPNow() {
