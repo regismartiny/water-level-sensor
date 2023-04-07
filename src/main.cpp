@@ -197,8 +197,8 @@ void wakeUpDisplay() {
 }
 
 void goToDeepSleep() {
-  LOGI("Initiating deep sleep");
-  LOGI("Will wakeup after %d seconds", DEEP_SLEEP_WAKEUP);
+  ESP_LOGI("MAIN", "Initiating deep sleep");
+  ESP_LOGI("MAIN", "Will wakeup after %d seconds", DEEP_SLEEP_WAKEUP);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_35, 0);
   delay(200);
   Serial.flush();
@@ -220,7 +220,7 @@ void goToSleep() {
 void printBootCount() {
    //Increment boot number and print it every reboot
   ++bootCount;
-  LOGI("Boot number: %i", bootCount);
+  ESP_LOGI("MAIN", "Boot number: %i", bootCount);
 }
 void printWakeupReason(){
   esp_sleep_wakeup_cause_t wakeup_reason;
@@ -228,23 +228,23 @@ void printWakeupReason(){
 
   switch(wakeup_reason)
   {
-    case ESP_SLEEP_WAKEUP_EXT0 : LOGI("Wakeup caused by external signal using RTC_IO"); break;
-    case ESP_SLEEP_WAKEUP_EXT1 : LOGI("Wakeup caused by external signal using RTC_CNTL"); break;
+    case ESP_SLEEP_WAKEUP_EXT0 : ESP_LOGI("MAIN", "Wakeup caused by external signal using RTC_IO"); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : ESP_LOGI("MAIN", "Wakeup caused by external signal using RTC_CNTL"); break;
     case ESP_SLEEP_WAKEUP_TIMER : {
-      LOGI("Wakeup caused by timer"); 
+      ESP_LOGI("MAIN", "Wakeup caused by timer"); 
       turnOffDisplay();
       break;
     }
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : LOGI("Wakeup caused by touchpad"); break;
-    case ESP_SLEEP_WAKEUP_ULP : LOGI("Wakeup caused by ULP program"); break;
-    default : LOGI("Wakeup was not caused by deep sleep: %s", String(wakeup_reason)); break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : ESP_LOGI("MAIN", "Wakeup caused by touchpad"); break;
+    case ESP_SLEEP_WAKEUP_ULP : ESP_LOGI("MAIN", "Wakeup caused by ULP program"); break;
+    default : ESP_LOGI("MAIN", "Wakeup was not caused by deep sleep: %s", String(wakeup_reason)); break;
   }
 }
 
 void display_sleep_task(void *args) {
   while(true) {
-    LOGI("Display sleep timer: %d", displaySleepTimer);
-    LOGI("Deep sleep timer: %d", deepSleepTimer);
+    ESP_LOGI("MAIN", "Display sleep timer: %d", displaySleepTimer);
+    ESP_LOGI("MAIN", "Deep sleep timer: %d", deepSleepTimer);
     if (displaySleepTimer == 0) {
       turnOffDisplay();
       // resetDisplaySleepTimer();
@@ -312,7 +312,7 @@ void publishWaterLevelInfo(int waterLevel) {
 }
 void printWaterLevelInfo() {
   if (waterLevelTaskHandle != NULL && eTaskGetState(waterLevelTaskHandle) == eSuspended) {
-    LOGI("printWaterLevelInfo(): task is suspended");
+    ESP_LOGI("MAIN", "printWaterLevelInfo(): task is suspended");
     return;
   }
   if (!myWaterLevelInfo.enableDisplayInfo) return;
@@ -343,7 +343,7 @@ void water_level_task(void *arg) {
   while(true) {
     int waterLevel = digitalRead(SENSOR_PIN);
 
-    LOGI("Water Sensor Level: %d", waterLevel);
+    ESP_LOGI("MAIN", "Water Sensor Level: %d", waterLevel);
 
     updateWaterLevelInfo(waterLevel);
     publishWaterLevelInfo(waterLevel);
@@ -364,7 +364,7 @@ void publishBatteryInfo(int batteryChargeLevel, double batteryVoltage) {
 }
 void printBatteryInfo() {
   if (batteryInfoTaskHandle != NULL && eTaskGetState(batteryInfoTaskHandle) == eSuspended) {
-    LOGI("printBatteryInfo(): task is suspended");
+    ESP_LOGI("MAIN", "printBatteryInfo(): task is suspended");
     return;
   }
   if (!myBatteryInfo.enableDisplayInfo) {
@@ -425,9 +425,9 @@ void battery_info_task(void *arg) {
     int batteryChargeLevel = battery.getBatteryChargeLevel();
     double batteryVoltage = battery.getBatteryVolts();
 
-    LOGI("Volts: %.2f", batteryVoltage);
-    LOGI("Charge level: %d", batteryChargeLevel);
-    LOGI("Charge level (using the reference table): %d", battery.getBatteryChargeLevel(true));
+    ESP_LOGI("MAIN", "Volts: %.2f", batteryVoltage);
+    ESP_LOGI("MAIN", "Charge level: %d", batteryChargeLevel);
+    ESP_LOGI("MAIN", "Charge level (using the reference table): %d", battery.getBatteryChargeLevel(true));
 
     updateBatteryInfo(batteryChargeLevel, batteryVoltage);
     publishBatteryInfo(batteryChargeLevel, batteryVoltage);
@@ -438,25 +438,25 @@ void battery_info_task(void *arg) {
 }
 void suspendBatteryInfoTask() {
   if (batteryInfoTaskHandle == NULL) {
-    Serial.println("suspendBatteryInfoTask(): batteryInfoTask not yet created");
+    ESP_LOGI("MAIN", "suspendBatteryInfoTask(): batteryInfoTask not yet created");
     return;
   }
-  LOGI("Suspending batteryInfo task");
+  ESP_LOGI("MAIN", "Suspending batteryInfo task");
   vTaskSuspend(batteryInfoTaskHandle);
 }
 void createBatteryInfoTask() {
   if (batteryInfoTaskHandle != NULL) {
-    Serial.println("createBatteryInfoTask(): batteryInfoTask already created");
+    ESP_LOGI("MAIN", "createBatteryInfoTask(): batteryInfoTask already created");
     return;
   }
-  LOGI("Creating batteryInfo task ");
+  ESP_LOGI("MAIN", "Creating batteryInfo task ");
   xTaskCreate(battery_info_task, "battery_info_task", 10000, NULL, tskIDLE_PRIORITY, &batteryInfoTaskHandle);
 }
 void resumeBatteryInfoTask() {
   if (batteryInfoTaskHandle == NULL) {
     createBatteryInfoTask();
   } else {
-    Serial.println("Resuming batteryInfo task");
+    ESP_LOGI("MAIN", "Resuming batteryInfo task");
     vTaskResume(batteryInfoTaskHandle);
   }
 }
@@ -552,7 +552,7 @@ boolean validateLongClick(Button2 &b) {
   boolean validTime = time >= MINIMUM_TIME_LONG_CLICK;
 
   if (!validTime) {
-    Serial.println("Invalid longClick time: " + String(time) + "ms");
+    ESP_LOGI("MAIN", "Invalid longClick time: %dms", time);
     return false;
   }
   return true;
@@ -566,8 +566,8 @@ void button_init()
     }
     resetSleepTimers();
     if (!validateLongClick(b)) return;
-    LOGI("Left button long click");
-    LOGI("Go to Scan WIFI...");
+    ESP_LOGI("MAIN", "Left button long click");
+    ESP_LOGI("MAIN", "Go to Scan WIFI...");
     changeMenuOption(WIFI_SCAN);
     wifi_scan();
   });
@@ -577,12 +577,12 @@ void button_init()
       return;
     }
     resetSleepTimers();
-    LOGI("Left button press");
-    LOGI("Go to Water Level info..");
+    ESP_LOGI("MAIN", "Left button press");
+    ESP_LOGI("MAIN", "Go to Water Level info..");
     changeMenuOption(WATER_LEVEL);
   });
   leftButton.setDoubleClickHandler([](Button2 & b) {
-    Serial.println("Truncating log file");
+    ESP_LOGI("MAIN", "Truncating log file");
     Log::truncateLogFile();
   });
 
@@ -593,7 +593,7 @@ void button_init()
     }
     resetSleepTimers();
     if (!validateLongClick(b)) return;
-    LOGI("Right button long click");
+    ESP_LOGI("MAIN", "Right button long click");
     changeMenuOption(DEEP_SLEEP);
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
@@ -607,12 +607,12 @@ void button_init()
       return;
     }
     resetSleepTimers();
-    LOGI("Right button click");
-    LOGI("Go to Battery info..");
+    ESP_LOGI("MAIN", "Right button click");
+    ESP_LOGI("MAIN", "Go to Battery info..");
     changeMenuOption(BATTERY_INFO);
   });
   rightButton.setDoubleClickHandler([](Button2 & b) {
-    LOGI("Publishing log file");
+    ESP_LOGI("MAIN", "Publishing log file");
     publishLogContent();
   });
 }
@@ -626,9 +626,19 @@ void loadAppConfig() {
   myAppConfig.loadConfig();
 }
 
+int redirectToLittleFS(const char *szFormat, va_list args) {
+  return Log::log(szFormat, args);
+}
+
+void logInit() {
+  esp_log_set_vprintf(redirectToLittleFS);
+  esp_log_level_set("*", ESP_LOG_VERBOSE);
+  Log::init();
+}
+
 void setup() {
   serialInit();
-  Log::init();
+  logInit();
   displayInit();
   printBootCount();
   printWakeupReason();

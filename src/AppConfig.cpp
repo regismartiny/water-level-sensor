@@ -25,15 +25,15 @@ AppConfig::AppConfig(Config *config) {
 }
 
 AppConfig::~AppConfig() {
-  LOGI("AppConfig destructor called");
+  ESP_LOGI("APPCONFIG", "AppConfig destructor called");
 }
 
 void AppConfig::listFiles() {
   File root = LittleFS.open("/");
   File file_ = root.openNextFile();
   while(file_){
-    LOGI("FILE: ");
-    LOGI(file_.name());
+    ESP_LOGI("APPCONFIG", "FILE: ");
+    ESP_LOGI("APPCONFIG", file_.name());
 
     file_ = root.openNextFile();
   }
@@ -41,25 +41,25 @@ void AppConfig::listFiles() {
 
 bool AppConfig::loadJsonConfig()
 {
-  LOGI("Loading JSON config");
+  ESP_LOGI("APPCONFIG", "Loading JSON config");
 
   if(!LittleFS.begin(true)){
-    LOGE("An Error has occurred while mounting LittleFS");
+    ESP_LOGE("APPCONFIG", "An Error has occurred while mounting LittleFS");
     return false;
   }
 
   //listFiles();
 
-  LOGI("Reading file: %s", filePath);
+  ESP_LOGI("APPCONFIG", "Reading file: %s", filePath);
   File file = LittleFS.open(filePath, FILE_READ);
   if(!file){
-    LOGI("There was an error opening the file");
+    ESP_LOGI("APPCONFIG", "There was an error opening the file");
     return false;
   }
 
   auto err = deserializeJson(json_doc, file);
   if(err) {
-    LOGE("Unable to deserialize JSON to JsonDocument: %s", err.c_str() );
+    ESP_LOGE("APPCONFIG", "Unable to deserialize JSON to JsonDocument: %s", err.c_str() );
     return false;
   }
 

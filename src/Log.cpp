@@ -1,5 +1,6 @@
 #include "Log.h"
 #include <ArduinoJson.h>
+#include <esp_log.h>
 #define USE_LittleFS
 
 #include <FS.h>
@@ -16,16 +17,16 @@
 char EMPTY_STRING[1] = "";
 
 Log::Log() {
-   Serial.println("Log constructor called");
+   ESP_LOGI("LOG", "Log constructor called");
 }
 
 Log::~Log() {
-   Serial.println("Log destructor called");
+   ESP_LOGI("LOG", "Log destructor called");
 }
 
 void Log::LittleFSInit() {
    if(!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)){
-      Serial.println("LITTLEFS Mount Failed");
+      ESP_LOGE("LOG", "LITTLEFS Mount Failed");
       return;
    }
    delay(50);
@@ -33,36 +34,35 @@ void Log::LittleFSInit() {
 
 void Log::createDirIfNotExists(const char * path){
    if(LittleFS.exists(path)) return;
-   Serial.printf("Creating Dir: %s\n", path);
+   ESP_LOGI("LOG", "Creating Dir: %s\n", path);
    if(LittleFS.mkdir(path)){
-      Serial.println("Dir created");
+      ESP_LOGI("LOG", "Dir created");
    } else {
-      Serial.println("Dir creation failed");
+      ESP_LOGI("LOG", "Dir creation failed");
    }
 }
 
 void Log::createLogFileIfNotExists(const char * path){
    if(LittleFS.exists(path)) return;
-   Serial.println("Log file not found. Creating file");
+   ESP_LOGI("LOG", "Log file not found. Creating file");
    File writeLog = LittleFS.open(LOG_FILEPATH, FILE_WRITE);
    if(!writeLog) {
-      Serial.println("Log file creation failed");
+      ESP_LOGE("LOG", "Log file creation failed");
       return;
    }
    delay(50);
    writeLog.close();
-   Serial.println("Log file created");
+   ESP_LOGI("LOG", "Log file created");
 }
 
 void Log::init() {
    LittleFSInit();
    createDirIfNotExists(LOG_DIRECTORY);
    createLogFileIfNotExists(LOG_FILEPATH);
-   Serial.println("Log initiated");
+   ESP_LOGI("LOG", "Persistent log initiated");
 }
 
 void Log::saveLog(char* msg, int size) {
-   // Serial.println("saveLog()");
    if(size >= 0) {      
       File logFile = LittleFS.open(LOG_FILEPATH, FILE_APPEND);
       //debug output
@@ -75,49 +75,22 @@ void Log::saveLog(char* msg, int size) {
    }
 }
 
-void Log::log(const char* format, esp_log_level_t logLevel, va_list args) {
+int Log::log(const char* format, va_list args) {
    int ret = vsnprintf(log_print_buffer, sizeof(log_print_buffer), format, args);
-   switch(logLevel) {
-      case ESP_LOG_DEBUG:
-         log_d("[%s] ", log_print_buffer, LOG_TAG);
-         break;
-      case ESP_LOG_INFO:
-         log_i("[%s] ", log_print_buffer, LOG_TAG);
-         break;
-      case ESP_LOG_ERROR:
-      default:
-         log_e("[%s] ", log_print_buffer, LOG_TAG);
-         break;
-   }
    saveLog(log_print_buffer, ret);
-}
-
-void Log::logE(const char* format, ...) {
-   va_list args;
-   va_start(args, format);
-   va_end(args);
-
-   log(format, ESP_LOG_DEBUG, args);
-}
-
-void Log::logI(const char* format, ...) {
-   va_list args;
-   va_start(args, format);
-   va_end(args);
-
-   log(format, ESP_LOG_INFO, args);
+   return ret;
 }
 
 char* Log::readLogFile() {
    // Serial.printf("readLogFile()");
    File logFile = LittleFS.open(LOG_FILEPATH);
    if(!logFile){
-      LOGE("Failed to open log file for reading");
+      ESP_LOGE("LOG", "Failed to open log file for reading");
       return EMPTY_STRING;
    }
 
    unsigned int fileSize = logFile.size();
-   LOGI("Log file size: %d bytes\n", fileSize);
+   ESP_LOGI("LOG", "Log file size: %d bytes\n", fileSize);
    //read only last n characters, n is LOG_BUFFER_SIZE
    int bytesToRead = fileSize > LOG_BUFFER_SIZE ? LOG_BUFFER_SIZE : fileSize;
    int seekPos = fileSize <= LOG_BUFFER_SIZE ? 0 : fileSize - LOG_BUFFER_SIZE;

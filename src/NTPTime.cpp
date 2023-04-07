@@ -26,9 +26,9 @@ void NTPTime::updateTime() {
     // "uouehra"[timeinfo.tm_wday]
     char timeStr[30];
     getTimeStringExpanded(timeStr, 30);
-    LOGI("Time received from NTP server: %s", timeStr);
+    ESP_LOGI("NTPTIME", "Time received from NTP server: %s", timeStr);
   } else {
-    LOGE("Error getting time from NTP server");
+    ESP_LOGE("NTPTIME", "Error getting time from NTP server");
   }
 }
 
