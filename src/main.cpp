@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <stdio.h>
-#include <TFT_eSPI.h>
 #include <Battery18650Stats.h>
 #include "Button2.h"
 #include "AppConfig.h"
@@ -9,6 +8,7 @@
 #include <WiFi.h>
 #include "PersistentLog.h"
 #include "ESPLogMacros.h"
+#include "Display.h"
 
 #define ADC_EN                              14 //ADC_EN is the ADC detection enable port
 #define ADC_PIN                             34
@@ -16,8 +16,6 @@
 #define CONV_FACTOR                          1.8
 #define READS                               30
 #define MIN_USB_VOL                          4.8 //volts
-#define BUTTON_RIGHT                        35
-#define BUTTON_LEFT                          0
 #define TIME_STRING_LENGTH                 100 
 #define MINIMUM_TIME_LONG_CLICK            200 //ms
 #define DOMOTICZ_VOLTAGE_DEVICE_ID           6
@@ -25,14 +23,7 @@
 #define BATTERY_INFO_UPDATE_INTERVAL        10 //seconds
 #define DOMOTICZ_WATER_LEVEL_DEVICE_ID       8
 #define WATER_LEVEL_INFO_UPDATE_INTERVAL    10 //seconds
-#define DISPLAY_SLEEP_TIMEOUT                5 //seconds without interaction to turn off display
-#define DEEP_SLEEP_TIMEOUT                   5 //seconds without interaction to start deep sleep
-#define DEEP_SLEEP_WAKEUP                 1800 //seconds of deep sleeping for device to wake up
-
-enum MENUS { INSTRUCTIONS, WATER_LEVEL, WIFI_SCAN, BATTERY_INFO, DEEP_SLEEP };
-struct {
-  MENUS activeMenu = INSTRUCTIONS;
-} myMenuInfo;
+#define DEEP_SLEEP_TIMEOUT                  15 //seconds without interaction to start deep sleep
 
 struct {
   char prevTime[TIME_STRING_LENGTH];
@@ -62,15 +53,13 @@ struct {
   boolean enableDisplayInfo = true;
 } myWaterLevelInfo;
 
+int deepSleepTimer = DEEP_SLEEP_TIMEOUT;
+
 RTC_DATA_ATTR int bootCount = 0;
 
 TaskHandle_t waterLevelTaskHandle;
 
-TFT_eSPI tft = TFT_eSPI();
-TaskHandle_t updateDisplayTaskHandle;
-int displaySleepTimer = DISPLAY_SLEEP_TIMEOUT;
-int deepSleepTimer = DEEP_SLEEP_TIMEOUT;
-TaskHandle_t displaySleepTaskHandle;
+
 
 Battery18650Stats battery(ADC_PIN, CONV_FACTOR, READS);
 TaskHandle_t batteryInfoTaskHandle;
@@ -90,6 +79,11 @@ NTPTime ntpTime = NTPTime();
 
 ESPNow espNow = ESPNow();
 
+void display_sleep_task(void *args);
+void update_display_task(void *args);
+void onDisplayWakeUp();
+Display display = Display(&display_sleep_task, &update_display_task, &onDisplayWakeUp);
+
 // ESPNow callback when data is sent
 void ESPNow_OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   espNow.onDataSent(mac_addr, status);
@@ -105,17 +99,7 @@ void serialInit() {
   Serial.begin(9600);
   delay(1000);
 }
-void displayInit() {
-  tft.init();
-  tft.setRotation(0);
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextDatum(TL_DATUM);
-  tft.setSwapBytes(true);
-}
-void clearDisplayDetailArea() {
-  tft.setTextDatum(TL_DATUM);
-  tft.fillRect(0, 20, 135, 240, TFT_BLACK);
-}
+
 
 //! Long time delay, it is recommended to use shallow sleep, which can effectively reduce the current consumption
 void espDelay(int ms)
@@ -127,68 +111,15 @@ void espDelay(int ms)
 void taskDelay(int ms) {
   vTaskDelay(ms / portTICK_PERIOD_MS);
 }
-void showInstructions() {
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_YELLOW);
-  tft.drawString("LeftButton:", tft.width() / 2, tft.height() / 2 - 48);
-  tft.drawString("[Water Level]", tft.width() / 2, tft.height() / 2 - 32 );
-  tft.drawString("LeftButtonLongPress:", tft.width() / 2, tft.height() / 2 - 16);
-  tft.drawString("[WiFi Scan]", tft.width() / 2, tft.height() / 2 );
-  tft.drawString("RightButton:", tft.width() / 2, tft.height() / 2 + 16);
-  tft.drawString("[Battery Info]", tft.width() / 2, tft.height() / 2 + 32 );
-  tft.drawString("RightButtonLongPress:", tft.width() / 2, tft.height() / 2 + 48);
-  tft.drawString("[Deep Sleep]", tft.width() / 2, tft.height() / 2 + 64 );
-}
-void changeMenuOption(MENUS menuOption) {
-  clearDisplayDetailArea();
-  switch (menuOption) {
-    case INSTRUCTIONS:
-      showInstructions();
-      break;
-    case WATER_LEVEL:
-      myWaterLevelInfo.valueOnDisplay = -1;
-      break;
-    case BATTERY_INFO:
-      myBatteryInfo.voltageOnDisplay = -1;
-      myBatteryInfo.chargeOnDisplay = -1;
-      break;
-  }
-  myMenuInfo.activeMenu = menuOption;
-}
 
-void resetDisplaySleepTimer() {
-  displaySleepTimer = DISPLAY_SLEEP_TIMEOUT;
-}
 void resetDeepSleepTimer() {
   deepSleepTimer = DEEP_SLEEP_TIMEOUT;
 }
 void resetSleepTimers() {
   resetDeepSleepTimer();
-  resetDisplaySleepTimer();
+  display.resetDisplaySleepTimer();
 }
 
-boolean isDisplayActive() {
-  int r = digitalRead(TFT_BL);
-  return r == 1;
-}
-void turnOffDisplay() {
-  if (!isDisplayActive()) return;
-  tft.fillScreen(TFT_BLACK);
-  tft.flush();
-  digitalWrite(TFT_BL, LOW);
-  tft.writecommand(TFT_DISPOFF);
-  tft.writecommand(TFT_SLPIN);
-}
-void wakeUpDisplay() {
-  if (!isDisplayActive()) {
-    tft.writecommand(TFT_DISPON);
-    displayInit();
-    changeMenuOption(INSTRUCTIONS);
-    digitalWrite(TFT_BL, HIGH);
-    resetDisplaySleepTimer();
-    delay(500);
-  }
-}
 
 void goToDeepSleep() {
   ESP_LOGI("MAIN", "Initiating deep sleep");
@@ -204,19 +135,19 @@ void goToSleep() {
   espDelay(6000);
   // digitalWrite(TFT_BL, !r);
 
-  turnOffDisplay();
+  display.turnOffDisplay();
   //After using light sleep, you need to disable timer wake, because here use external IO port to wake up
   // esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
   // esp_sleep_enable_ext1_wakeup(GPIO_SEL_35, ESP_EXT1_WAKEUP_ALL_LOW);
   goToDeepSleep();
 }
 
-void printBootCount() {
+void logBootCount() {
    //Increment boot number and print it every reboot
   ++bootCount;
   ESP_LOGI("MAIN", "Boot number: %i", bootCount);
 }
-void printWakeupReason(){
+void logWakeupReason(){
   esp_sleep_wakeup_cause_t wakeup_reason;
   wakeup_reason = esp_sleep_get_wakeup_cause();
 
@@ -226,7 +157,7 @@ void printWakeupReason(){
     case ESP_SLEEP_WAKEUP_EXT1 : ESP_LOGI("MAIN", "Wakeup caused by external signal using RTC_CNTL"); break;
     case ESP_SLEEP_WAKEUP_TIMER : {
       ESP_LOGI("MAIN", "Wakeup caused by timer"); 
-      turnOffDisplay();
+      display.turnOffDisplay();
       break;
     }
     case ESP_SLEEP_WAKEUP_TOUCHPAD : ESP_LOGI("MAIN", "Wakeup caused by touchpad"); break;
@@ -237,13 +168,13 @@ void printWakeupReason(){
 
 void display_sleep_task(void *args) {
   while(true) {
-    ESP_LOGI("MAIN", "Display sleep timer: %d", displaySleepTimer);
+    ESP_LOGI("MAIN", "Display sleep timer: %d", display.getDisplaySleepTimer());
     ESP_LOGI("MAIN", "Deep sleep timer: %d", deepSleepTimer);
-    if (displaySleepTimer == 0) {
-      turnOffDisplay();
-      // resetDisplaySleepTimer();
+    if (display.getDisplaySleepTimer() == 0) {
+      display.turnOffDisplay();
+      // resetdisplay.getDisplaySleepTimer()();
     } else {
-      displaySleepTimer--;
+      display.displaySleepTimerTick();
     }
 
     if (deepSleepTimer == 0) {
@@ -256,21 +187,7 @@ void display_sleep_task(void *args) {
     taskDelay(1000);
   }
 }
-void createDisplaySleepTask() {
-  xTaskCreate(display_sleep_task, "display_sleep_task", 10000, NULL, tskIDLE_PRIORITY, &displaySleepTaskHandle);
-}
 
-void printTime() {
-  if (myTimeInfo.timeChanged && strcmp(myTimeInfo.timeOnDisplay, myTimeInfo.lastTime) != 0) {
-    tft.setTextDatum(TL_DATUM);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.fillRect(0, 0, 120, 30, TFT_BLACK);
-    // tft.drawRect(0, 0, 120, 10, TFT_YELLOW);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.drawString(myTimeInfo.lastTime, 0, 0, 2);
-  }
-  strcpy(myTimeInfo.timeOnDisplay, myTimeInfo.lastTime);
-}
 void updateTimeInfo(const char* timeString) {
   if (strcmp(myTimeInfo.lastTime, timeString) != 0) {
     strcpy(myTimeInfo.prevTime, myTimeInfo.lastTime);
@@ -314,13 +231,7 @@ void printWaterLevelInfo() {
   boolean updateValue = myWaterLevelInfo.valueOnDisplay == -1 || (myWaterLevelInfo.lastValue != myWaterLevelInfo.valueOnDisplay);
   if (updateValue) {
     int waterLevel = myWaterLevelInfo.lastValue;
-    const char* waterLevelStr = waterLevel == 0 ? "OK" : "LOW";
-    clearDisplayDetailArea();
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_YELLOW);
-    tft.drawString("Water Level is ", tft.width() / 2, tft.height() / 2, 2);
-    tft.setTextColor(waterLevel == 0 ? TFT_GREEN : TFT_RED);
-    tft.drawString(String(waterLevelStr), tft.width() / 2, tft.height() / 2 + 40, 4);
+    display.showWaterLevel(waterLevel);
     myWaterLevelInfo.valueOnDisplay = waterLevel;
   }
 }
@@ -366,30 +277,15 @@ void printBatteryInfo() {
   }
   boolean updateVoltage = myBatteryInfo.voltageOnDisplay == -1 || (myBatteryInfo.lastVoltage != myBatteryInfo.voltageOnDisplay);
   boolean updateCharge = updateVoltage || myBatteryInfo.chargeOnDisplay == -1 || (myBatteryInfo.lastCharge != myBatteryInfo.chargeOnDisplay);
+  boolean isCharging = myBatteryInfo.lastVoltage >= MIN_USB_VOL;
 
-  tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(TFT_RED);
-  tft.drawString("Nivel de carga", 10, 30, 2);
+  display.showBatteryInfo(updateCharge, myBatteryInfo.lastCharge, isCharging, updateVoltage, myBatteryInfo.lastVoltage);
+
   if (updateCharge) {
-    tft.setTextColor(TFT_GREEN);
-    // tft.drawRect(10, 60, 100, 30, TFT_YELLOW);
-    tft.fillRect(10, 60, 100, 30, TFT_BLACK);
-    boolean charging = myBatteryInfo.lastVoltage >= MIN_USB_VOL;
-    if (charging) {
-      tft.drawString("carregando...", 10, 60, 2);
-    } else {
-      tft.drawString(String(myBatteryInfo.lastCharge) + "%", 10, 60, 4);
-    }
     myBatteryInfo.chargeOnDisplay = myBatteryInfo.lastCharge;
   }
 
-  tft.setTextColor(TFT_RED);
-  tft.drawString("Voltagem", 10, 90, 2);
   if (updateVoltage) {
-    tft.setTextColor(TFT_BLUE);
-    // tft.drawRect(10, 115, 100, 30, TFT_YELLOW);
-    tft.fillRect(10, 115, 100, 30, TFT_BLACK);
-    tft.drawString(String(myBatteryInfo.lastVoltage) + "V", 10, 115, 4);
     myBatteryInfo.voltageOnDisplay = myBatteryInfo.lastVoltage;
   }
 }
@@ -455,10 +351,17 @@ void resumeBatteryInfoTask() {
   }
 }
 
+void printTime() {
+  if (myTimeInfo.timeChanged && strcmp(myTimeInfo.timeOnDisplay, myTimeInfo.lastTime) != 0) {
+    display.showTime(myTimeInfo.lastTime);
+  }
+  strcpy(myTimeInfo.timeOnDisplay, myTimeInfo.lastTime);
+}
+
 void update_display_task(void *arg) {
   while(true) {
     // if (!isDisplayActive() || !tft.availableForWrite()) break;
-    // printTime();
+    printTime();
     switch (myMenuInfo.activeMenu) {
       case BATTERY_INFO:
         printBatteryInfo();
@@ -476,9 +379,6 @@ void update_display_task(void *arg) {
     taskDelay(500);
   }
 }
-void createUpdateDisplayTask() {
-  xTaskCreate(update_display_task, "update_display_task", 10000, NULL, tskIDLE_PRIORITY, &updateDisplayTaskHandle);
-}
 
 void pinoutInit() {
   pinMode(ADC_EN, OUTPUT);
@@ -488,44 +388,56 @@ void pinoutInit() {
 
 void wifi_scan()
 {
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextSize(1);
-
-  tft.drawString("Scan Network", tft.width() / 2, tft.height() / 2, 2);
+  display.showScanningWifi();
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   delay(100);
 
   int16_t n = WiFi.scanNetworks();
-  tft.setTextDatum(MC_DATUM);
-  tft.fillScreen(TFT_BLACK);
-  if (n == 0) {
-      tft.drawString("no networks found", tft.width() / 2, tft.height() / 2);
-  } else {
-      tft.setCursor(0, 30);
-      Serial.printf("Found %d net\n", n);
-      for (int i = 0; i < n; ++i) {
-          sprintf(wifiNetworksBuff,
-                  "[%d]:%s(%d)",
-                  i + 1,
-                  WiFi.SSID(i).c_str(),
-                  WiFi.RSSI(i));
-          tft.println(wifiNetworksBuff);
-      }
+
+  char *networksFound[512];
+
+  for (int i = 0; i < n; ++i) {
+    networksFound[i] = (char *)malloc(512 * sizeof(char));
+    sprintf(wifiNetworksBuff,
+            "[%d]:%s(%d)",
+            i + 1,
+            WiFi.SSID(i).c_str(),
+            WiFi.RSSI(i));
+    strcpy(networksFound[i], wifiNetworksBuff);        
   }
+  
+  display.showWifiScanned(networksFound, n);
   // WiFi.mode(WIFI_OFF);
+
+  for (int i = 0; i < n; ++i) {
+     free(networksFound[i]);    
+  }
+}
+
+void changeMenuOption(MENUS menuOption) {
+    display.clearDisplayDetailArea();
+    switch (menuOption) {
+    case INSTRUCTIONS:
+        display.showInstructions();
+        break;
+    case WATER_LEVEL:
+        myWaterLevelInfo.valueOnDisplay = -1;
+        break;
+    case BATTERY_INFO:
+        myBatteryInfo.voltageOnDisplay = -1;
+        myBatteryInfo.chargeOnDisplay = -1;
+        break;
+    }
+    myMenuInfo.activeMenu = menuOption;
 }
 
 void connectWifi() {
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextSize(1);
+  Serial.print("Connecting to WIFI ");
+  Serial.println(myConfig.wifiSSID);
 
-  tft.drawString("Connecting to " + String(myConfig.wifiSSID), tft.width() / 2, tft.height() / 2);
+  display.showConnectingWifi(myConfig.wifiSSID);
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(myConfig.wifiSSID, myConfig.wifiPassword);
@@ -534,11 +446,7 @@ void connectWifi() {
     delay(1000);
   }
 
-  tft.setTextDatum(MC_DATUM);
-  tft.fillScreen(TFT_BLACK);
-  tft.drawString("Connected to " + String(myConfig.wifiSSID), tft.width() / 2, tft.height() / 2);
-  tft.drawString("IP: " + WiFi.localIP().toString(), tft.width() / 2, tft.height() / 2 + 50);
-  Serial.println(WiFi.localIP());
+  display.showWifiConnected(myConfig.wifiSSID, WiFi.localIP().toString().c_str());
 }
 
 boolean validateLongClick(Button2 &b) {
@@ -554,10 +462,7 @@ boolean validateLongClick(Button2 &b) {
 void button_init()
 {
   leftButton.setLongClickHandler([](Button2 & b) {
-    if (!isDisplayActive()) {
-      wakeUpDisplay();
-      return;
-    }
+    display.wakeUpDisplay();
     resetSleepTimers();
     if (!validateLongClick(b)) return;
     ESP_LOGI("MAIN", "Left button long click");
@@ -566,10 +471,7 @@ void button_init()
     wifi_scan();
   });
   leftButton.setClickHandler([](Button2 & b) {
-    if (!isDisplayActive()) {
-      wakeUpDisplay();
-      return;
-    }
+    display.wakeUpDisplay();
     resetSleepTimers();
     ESP_LOGI("MAIN", "Left button press");
     ESP_LOGI("MAIN", "Go to Water Level info..");
@@ -581,25 +483,16 @@ void button_init()
   });
 
   rightButton.setLongClickHandler([](Button2 & b) {
-    if (!isDisplayActive()) {
-      wakeUpDisplay();
-      return;
-    }
+    display.wakeUpDisplay();
     resetSleepTimers();
     if (!validateLongClick(b)) return;
     ESP_LOGI("MAIN", "Right button long click");
     changeMenuOption(DEEP_SLEEP);
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextDatum(MC_DATUM);
-    tft.drawString("Press again to wake up",  tft.width() / 2, tft.height() / 2 );
+    display.showGoingToDeepSleep();
     goToSleep();
   });
   rightButton.setClickHandler([](Button2 & b) {
-    if (!isDisplayActive()) {
-      wakeUpDisplay();
-      return;
-    }
+    display.wakeUpDisplay();
     resetSleepTimers();
     ESP_LOGI("MAIN", "Right button click");
     ESP_LOGI("MAIN", "Go to Battery info..");
@@ -614,6 +507,10 @@ void button_loop()
 {
   rightButton.loop();
   leftButton.loop();
+}
+
+void onDisplayWakeUp() {
+  changeMenuOption(INSTRUCTIONS);
 }
 
 void loadAppConfig() {
@@ -637,9 +534,9 @@ void logInit() {
 void setup() {
   serialInit();
   logInit();
-  displayInit();
-  printBootCount();
-  printWakeupReason();
+  display.init();
+  logBootCount();
+  logWakeupReason();
   loadAppConfig();
   pinoutInit();
   changeMenuOption(INSTRUCTIONS);
@@ -648,8 +545,6 @@ void setup() {
   createTimeTask();
   createWaterLevelTask();
   createBatteryInfoTask();
-  createUpdateDisplayTask();
-  createDisplaySleepTask();
 }
 
 void loop() {
