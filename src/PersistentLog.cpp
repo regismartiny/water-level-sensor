@@ -62,6 +62,7 @@ void PersistentLog::init() {
 }
 
 void PersistentLog::saveLog(char* msg, int size) {
+   if (!LOG_PERSISTENCE_ACTIVE) return;
    if(size < 0) return;
    
    bool success = logger->append(msg, true);

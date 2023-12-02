@@ -5,6 +5,7 @@ using fs::FS; //necessary for ESPLogger to compile
 
 #define LOG_BUFFER_SIZE 512
 #define LOG_JSON_BUFFER_SIZE 1024
+#define LOG_PERSISTENCE_ACTIVE false
 
 class PersistentLog {
    public:
