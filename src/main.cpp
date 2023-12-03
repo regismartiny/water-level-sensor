@@ -24,6 +24,8 @@
 #define DOMOTICZ_WATER_LEVEL_DEVICE_ID       8
 #define WATER_LEVEL_INFO_UPDATE_INTERVAL    10 //seconds
 #define DEEP_SLEEP_TIMEOUT                  15 //seconds without interaction to start deep sleep
+#define DISPLAY_ENABLED                      false
+#define NTP_TIME_ENABLED                     false
 
 struct {
   char prevTime[TIME_STRING_LENGTH];
@@ -59,6 +61,7 @@ RTC_DATA_ATTR int bootCount = 0;
 
 TaskHandle_t waterLevelTaskHandle;
 
+TaskHandle_t deepSleepTaskHandle;
 
 
 Battery18650Stats battery(ADC_PIN, CONV_FACTOR, READS);
@@ -79,7 +82,6 @@ NTPTime ntpTime = NTPTime();
 
 ESPNow espNow = ESPNow();
 
-void display_sleep_task(void *args);
 void update_display_task(void *args);
 void onDisplayWakeUp();
 Display display = Display(&display_sleep_task, &update_display_task, &onDisplayWakeUp);
@@ -121,7 +123,7 @@ void resetSleepTimers() {
 }
 
 
-void goToDeepSleep() {
+void initDeepSleep() {
   ESP_LOGI("MAIN", "Initiating deep sleep");
   ESP_LOGI("MAIN", "Will wakeup after %d seconds", DEEP_SLEEP_WAKEUP);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_35, 0);
@@ -139,7 +141,7 @@ void goToSleep() {
   //After using light sleep, you need to disable timer wake, because here use external IO port to wake up
   // esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
   // esp_sleep_enable_ext1_wakeup(GPIO_SEL_35, ESP_EXT1_WAKEUP_ALL_LOW);
-  goToDeepSleep();
+  initDeepSleep();
 }
 
 void logBootCount() {
@@ -166,26 +168,27 @@ void logWakeupReason(){
   }
 }
 
-void display_sleep_task(void *args) {
+void deep_sleep_task(void *args) {
   while(true) {
-    ESP_LOGI("MAIN", "Display sleep timer: %d", display.getDisplaySleepTimer());
     ESP_LOGI("MAIN", "Deep sleep timer: %d", deepSleepTimer);
-    if (display.getDisplaySleepTimer() == 0) {
-      display.turnOffDisplay();
-      // resetdisplay.getDisplaySleepTimer()();
-    } else {
-      display.displaySleepTimerTick();
-    }
 
     if (deepSleepTimer == 0) {
       resetDeepSleepTimer();
-      goToDeepSleep();
+      initDeepSleep();
     } else {
       deepSleepTimer--;
     }
-
     taskDelay(1000);
   }
+}
+
+void createDeepSleepTask() {
+  if (deepSleepTaskHandle != NULL) {
+    ESP_LOGI("MAIN", "createDeepSleepTask(): deepSleepTask already created");
+    return;
+  }
+  ESP_LOGI("MAIN", "Creating deepSleepTask task ");
+  xTaskCreate(deep_sleep_task, "deep_sleep_task", 10000, NULL, tskIDLE_PRIORITY, &deepSleepTaskHandle);
 }
 
 void updateTimeInfo(const char* timeString) {
@@ -211,9 +214,6 @@ void update_time_task(void *arg) {
 }
 void createTimeTask() {
   xTaskCreate(update_time_task, "update_time_task", 2048, NULL, tskIDLE_PRIORITY, &updateTimeTaskHandle);
-}
-void resumeUpdateTimeTask() {
-  vTaskResume(updateTimeTaskHandle);
 }
 
 void publishWaterLevelInfo(int waterLevel) {
@@ -361,7 +361,7 @@ void printTime() {
 void update_display_task(void *arg) {
   while(true) {
     // if (!isDisplayActive() || !tft.availableForWrite()) break;
-    printTime();
+    // printTime();
     switch (myMenuInfo.activeMenu) {
       case BATTERY_INFO:
         printBatteryInfo();
@@ -533,21 +533,42 @@ void logInit() {
 
 void setup() {
   serialInit();
+  pinoutInit();
   logInit();
-  display.init();
+  if (DISPLAY_ENABLED) {
+    display.init();
+  }
   logBootCount();
   logWakeupReason();
   loadAppConfig();
-  pinoutInit();
   changeMenuOption(INSTRUCTIONS);
-  button_init();
+  if (DISPLAY_ENABLED) {
+    button_init();
+  }
   espNow.init(myConfig.espNowGatewayMacAddress, myConfig.wifiSSID);
-  createTimeTask();
+  if (NTP_TIME_ENABLED) {
+    createTimeTask();
+  }
   createWaterLevelTask();
   createBatteryInfoTask();
+  createDeepSleepTask();
 }
 
 void loop() {
-  button_loop();
+  if (DISPLAY_ENABLED) {
+    button_loop();
+  }
+}
+
+void display_sleep_task(void *args) {
+  while(true) {
+    ESP_LOGI("MAIN", "Display sleep timer: %d", display.getDisplaySleepTimer());
+    if (display.getDisplaySleepTimer() == 0) {
+      display.turnOffDisplay();
+    } else {
+      display.displaySleepTimerTick();
+    }
+    taskDelay(1000);
+  }
 }
 

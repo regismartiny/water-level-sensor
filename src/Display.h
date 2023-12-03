@@ -11,6 +11,8 @@ struct {
   MENUS activeMenu = INSTRUCTIONS;
 } myMenuInfo;
 
+void display_sleep_task(void *args);
+
 class Display {
     public:
         Display(TaskFunction_t displaySleepTaskCallback, TaskFunction_t updateDisplayTaskCallback, void (*onDisplayWakeUpCallBack)(void));
@@ -33,12 +35,14 @@ class Display {
         int getDisplaySleepTimer() { return displaySleepTimer; };
         void displaySleepTimerTick() { displaySleepTimer--; };
     private:
+        boolean initiated;
         TFT_eSPI tft = TFT_eSPI();
         int displaySleepTimer = DISPLAY_SLEEP_TIMEOUT;
         TaskHandle_t updateDisplayTaskHandle;
         TaskHandle_t displaySleepTaskHandle;
+        TaskFunction_t mDisplaySleepTaskCallback;
+        TaskFunction_t mUpdateDisplayTaskCallback;
         void (*mOnDisplayWakeUpCallBack)(void);
-        void display_sleep_task(void *args);
         void createDisplaySleepTask(TaskFunction_t display_sleep_task);
         void createUpdateDisplayTask(TaskFunction_t update_display_task);
 };

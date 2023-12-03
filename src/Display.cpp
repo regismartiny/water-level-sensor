@@ -1,8 +1,8 @@
 #include "Display.h"
 
 Display::Display(TaskFunction_t displaySleepTaskCallback, TaskFunction_t updateDisplayTaskCallback, void (*onDisplayWakeUpCallBack)(void)) {
-    createDisplaySleepTask(displaySleepTaskCallback);
-    createUpdateDisplayTask(updateDisplayTaskCallback);
+    mDisplaySleepTaskCallback = displaySleepTaskCallback;
+    mUpdateDisplayTaskCallback = updateDisplayTaskCallback;
     mOnDisplayWakeUpCallBack = (void(*)())onDisplayWakeUpCallBack;
 }
 
@@ -12,23 +12,33 @@ void Display::init() {
     tft.fillScreen(TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
     tft.setSwapBytes(true);
+    createDisplaySleepTask(mDisplaySleepTaskCallback);
+    createUpdateDisplayTask(mUpdateDisplayTaskCallback);
+    initiated = true;
 }
 
 void Display::clearDisplayDetailArea() {
+    if (!initiated) return;
+
     tft.setTextDatum(TL_DATUM);
     tft.fillRect(0, 20, 135, 240, TFT_BLACK);
 }
 
 void Display::resetDisplaySleepTimer() {
+    if (!initiated) return;
+
     displaySleepTimer = DISPLAY_SLEEP_TIMEOUT;
 }
 
 boolean Display::isDisplayActive() {
+    if (!initiated) return false;
+
     int r = digitalRead(TFT_BL);
     return r == 1;
 }
 
 void Display::turnOffDisplay() {
+    if (!initiated) return;
     if (!isDisplayActive()) return;
 
     tft.fillScreen(TFT_BLACK);
@@ -39,6 +49,7 @@ void Display::turnOffDisplay() {
 }
 
 void Display::wakeUpDisplay() {
+    if (!initiated) return;
     if (isDisplayActive()) return;
 
     tft.writecommand(TFT_DISPON);
@@ -50,6 +61,8 @@ void Display::wakeUpDisplay() {
 }
 
 void Display::showInstructions() {
+    if (!initiated) return;
+
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_YELLOW);
     tft.drawString("LeftButton:", tft.width() / 2, tft.height() / 2 - 48);
@@ -63,6 +76,8 @@ void Display::showInstructions() {
 }
 
 void Display::showConnectingWifi(char *wifiSSID) {
+    if (!initiated) return;
+
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.fillScreen(TFT_BLACK);
@@ -71,6 +86,8 @@ void Display::showConnectingWifi(char *wifiSSID) {
 }
 
 void Display::showWifiConnected(char *wifiSSID, const char *localIP) {
+    if (!initiated) return;
+
     tft.setTextDatum(MC_DATUM);
     tft.fillScreen(TFT_BLACK);
     tft.drawString("Connected to " + String(wifiSSID), tft.width() / 2, tft.height() / 2);
@@ -79,6 +96,8 @@ void Display::showWifiConnected(char *wifiSSID, const char *localIP) {
 }
 
 void Display::showWaterLevel(int waterLevel) {
+    if (!initiated) return;
+
     const char* waterLevelStr = waterLevel == 0 ? "OK" : "LOW";
     clearDisplayDetailArea();
     tft.setTextDatum(MC_DATUM);
@@ -89,6 +108,8 @@ void Display::showWaterLevel(int waterLevel) {
 }
 
 void Display::showTime(char *time) {
+    if (!initiated) return;
+
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.fillRect(0, 0, 120, 30, TFT_BLACK);
@@ -98,6 +119,8 @@ void Display::showTime(char *time) {
 }
 
 void Display::showScanningWifi() {
+    if (!initiated) return;
+
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.fillScreen(TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
@@ -105,7 +128,9 @@ void Display::showScanningWifi() {
     tft.drawString("Scan Network", tft.width() / 2, tft.height() / 2, 2);
 }
 
-void Display::showWifiScanned(char* networksFoundStr[], int networksFoundCount){
+void Display::showWifiScanned(char* networksFoundStr[], int networksFoundCount) {
+    if (!initiated) return;
+
     tft.setTextDatum(MC_DATUM);
     tft.fillScreen(TFT_BLACK);
     if (networksFoundCount == 0) {
@@ -120,6 +145,8 @@ void Display::showWifiScanned(char* networksFoundStr[], int networksFoundCount){
 }
 
 void Display::showBatteryInfo(bool updateCharge, double lastCharge, boolean isCharging, bool updateVoltage, double lastVoltage) {
+    if (!initiated) return;
+
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(TFT_RED);
     tft.drawString("Nivel de carga", 10, 30, 2);
@@ -145,11 +172,17 @@ void Display::showBatteryInfo(bool updateCharge, double lastCharge, boolean isCh
 }
 
 void Display::showGoingToDeepSleep() {
+    if (!initiated) return;
+    
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setTextDatum(MC_DATUM);
     tft.drawString("Press again to wake up",  tft.width() / 2, tft.height() / 2 );
 }
+
+
+
+///// PRIVATE METHODS
 
 void Display::createDisplaySleepTask(TaskFunction_t display_sleep_task) {
     xTaskCreate(display_sleep_task, "display_sleep_task", 10000, NULL, tskIDLE_PRIORITY, &displaySleepTaskHandle);
