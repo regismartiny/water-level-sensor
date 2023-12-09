@@ -10,6 +10,10 @@
 #include "ESPLogMacros.h"
 #include "Display.h"
 
+#define LOW_POWER_MODE
+// #define DISPLAY_ENABLED
+// #define NTP_TIME_ENABLED
+#define LOG_LEVEL                           ESP_LOG_VERBOSE
 #define ADC_EN                              14 //ADC_EN is the ADC detection enable port
 #define ADC_PIN                             34
 #define SENSOR_PIN                          12
@@ -24,8 +28,7 @@
 #define DOMOTICZ_WATER_LEVEL_DEVICE_ID       8
 #define WATER_LEVEL_INFO_UPDATE_INTERVAL    10 //seconds
 #define DEEP_SLEEP_TIMEOUT                  15 //seconds without interaction to start deep sleep
-#define DISPLAY_ENABLED                      false
-#define NTP_TIME_ENABLED                     false
+#define LOG_TAG_MAIN                        "MAIN"
 
 struct {
   char prevTime[TIME_STRING_LENGTH];
@@ -77,14 +80,58 @@ PersistentLog persistentLog = PersistentLog();
 Config myConfig = Config();
 AppConfig myAppConfig = AppConfig(&myConfig);
 
-TaskHandle_t updateTimeTaskHandle;
-NTPTime ntpTime = NTPTime();
-
 ESPNow espNow = ESPNow();
 
+#ifdef NTP_TIME_ENABLED
+TaskHandle_t updateTimeTaskHandle;
+NTPTime ntpTime = NTPTime();
+#endif
+
+#ifdef DISPLAY_ENABLED
 void update_display_task(void *args);
 void onDisplayWakeUp();
 Display display = Display(&display_sleep_task, &update_display_task, &onDisplayWakeUp);
+#endif
+
+void PRINT(String str) {
+  #ifndef LOW_POWER_MODE
+  Serial.print(str);
+  #endif
+}
+
+void PRINTLN(String str) {
+  #ifndef LOW_POWER_MODE
+  Serial.println(str);
+  #endif
+}
+
+void PRINTF(const char *format, ...) {
+  #ifndef LOW_POWER_MODE
+  char loc_buf[64];
+  char * temp = loc_buf;
+  va_list arg;
+  va_list copy;
+  va_start(arg, format);
+  va_copy(copy, arg);
+  int len = vsnprintf(temp, sizeof(loc_buf), format, copy);
+  va_end(copy);
+  if(len < 0) {
+      va_end(arg);
+  }
+  if(len >= (int)sizeof(loc_buf)){  // comparation of same sign type for the compiler
+      temp = (char*) malloc(len+1);
+      if(temp == NULL) {
+          va_end(arg);
+      }
+      len = vsnprintf(temp, len+1, format, arg);
+  }
+  va_end(arg);
+  Serial.print(temp);
+  if(temp != loc_buf){
+      free(temp);
+  }
+  #endif
+}
 
 // ESPNow callback when data is sent
 void ESPNow_OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -94,12 +141,12 @@ void ESPNow_OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 void publishLogContent() {
   std::string jsonStr = persistentLog.readLogFileAsJsonPretty();
   espNow.sendMessage(std::string(jsonStr), LOG);
-  Serial.printf("Log content: %s\n", jsonStr.c_str());
+  PRINTF("Log content: %s\n", jsonStr.c_str());
 }
 
 void serialInit() {
-  Serial.begin(9600);
-  delay(1000);
+  Serial.begin(115200);
+  delay(100);
 }
 
 
@@ -119,13 +166,15 @@ void resetDeepSleepTimer() {
 }
 void resetSleepTimers() {
   resetDeepSleepTimer();
+  #ifdef DISPLAY_ENABLED
   display.resetDisplaySleepTimer();
+  #endif
 }
 
 
 void initDeepSleep() {
-  ESP_LOGI("MAIN", "Initiating deep sleep");
-  ESP_LOGI("MAIN", "Will wakeup after %d seconds", DEEP_SLEEP_WAKEUP);
+  ESP_LOGI(LOG_TAG_MAIN, "Initiating deep sleep");
+  ESP_LOGI(LOG_TAG_MAIN, "Will wakeup after %d seconds", DEEP_SLEEP_WAKEUP);
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_35, 0);
   delay(200);
   Serial.flush();
@@ -133,21 +182,18 @@ void initDeepSleep() {
   esp_deep_sleep_start();
 }
 void goToSleep() {
-  // int r = digitalRead(TFT_BL);
+  PRINTLN("Initiating deep sleep in 6 seconds");
   espDelay(6000);
-  // digitalWrite(TFT_BL, !r);
-
+  #ifdef DISPLAY_ENABLED
   display.turnOffDisplay();
-  //After using light sleep, you need to disable timer wake, because here use external IO port to wake up
-  // esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
-  // esp_sleep_enable_ext1_wakeup(GPIO_SEL_35, ESP_EXT1_WAKEUP_ALL_LOW);
+  #endif
   initDeepSleep();
 }
 
 void logBootCount() {
    //Increment boot number and print it every reboot
   ++bootCount;
-  ESP_LOGI("MAIN", "Boot number: %i", bootCount);
+  ESP_LOGI(LOG_TAG_MAIN, "Boot number: %i", bootCount);
 }
 void logWakeupReason(){
   esp_sleep_wakeup_cause_t wakeup_reason;
@@ -155,22 +201,24 @@ void logWakeupReason(){
 
   switch(wakeup_reason)
   {
-    case ESP_SLEEP_WAKEUP_EXT0 : ESP_LOGI("MAIN", "Wakeup caused by external signal using RTC_IO"); break;
-    case ESP_SLEEP_WAKEUP_EXT1 : ESP_LOGI("MAIN", "Wakeup caused by external signal using RTC_CNTL"); break;
+    case ESP_SLEEP_WAKEUP_EXT0 : ESP_LOGI(LOG_TAG_MAIN, "Wakeup caused by external signal using RTC_IO"); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : ESP_LOGI(LOG_TAG_MAIN, "Wakeup caused by external signal using RTC_CNTL"); break;
     case ESP_SLEEP_WAKEUP_TIMER : {
-      ESP_LOGI("MAIN", "Wakeup caused by timer"); 
+      ESP_LOGI(LOG_TAG_MAIN, "Wakeup caused by timer");
+      #ifdef DISPLAY_ENABLED
       display.turnOffDisplay();
+      #endif
       break;
     }
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : ESP_LOGI("MAIN", "Wakeup caused by touchpad"); break;
-    case ESP_SLEEP_WAKEUP_ULP : ESP_LOGI("MAIN", "Wakeup caused by ULP program"); break;
-    default : ESP_LOGI("MAIN", "Wakeup was not caused by deep sleep: %s", String(wakeup_reason)); break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : ESP_LOGI(LOG_TAG_MAIN, "Wakeup caused by touchpad"); break;
+    case ESP_SLEEP_WAKEUP_ULP : ESP_LOGI(LOG_TAG_MAIN, "Wakeup caused by ULP program"); break;
+    default : ESP_LOGI(LOG_TAG_MAIN, "Wakeup was not caused by deep sleep: %s", String(wakeup_reason)); break;
   }
 }
 
 void deep_sleep_task(void *args) {
   while(true) {
-    ESP_LOGI("MAIN", "Deep sleep timer: %d", deepSleepTimer);
+    ESP_LOGI(LOG_TAG_MAIN, "Deep sleep timer: %d", deepSleepTimer);
 
     if (deepSleepTimer == 0) {
       resetDeepSleepTimer();
@@ -184,13 +232,14 @@ void deep_sleep_task(void *args) {
 
 void createDeepSleepTask() {
   if (deepSleepTaskHandle != NULL) {
-    ESP_LOGI("MAIN", "createDeepSleepTask(): deepSleepTask already created");
+    ESP_LOGI(LOG_TAG_MAIN, "createDeepSleepTask(): deepSleepTask already created");
     return;
   }
-  ESP_LOGI("MAIN", "Creating deepSleepTask task ");
+  ESP_LOGI(LOG_TAG_MAIN, "Creating deepSleepTask task ");
   xTaskCreate(deep_sleep_task, "deep_sleep_task", 10000, NULL, tskIDLE_PRIORITY, &deepSleepTaskHandle);
 }
 
+#ifdef NTP_TIME_ENABLED
 void updateTimeInfo(const char* timeString) {
   if (strcmp(myTimeInfo.lastTime, timeString) != 0) {
     strcpy(myTimeInfo.prevTime, myTimeInfo.lastTime);
@@ -199,22 +248,26 @@ void updateTimeInfo(const char* timeString) {
     myTimeInfo.timeChanged = false;
   }
   strcpy(myTimeInfo.lastTime, timeString);
-  // Serial.printf("\nmyTimeInfo.lastTime: %s", myTimeInfo.lastTime);
-  // Serial.printf("\ntimeString: %s", timeString);
-  // Serial.printf("\ntimeChanged: %s", myTimeInfo.timeChanged ? "true" : "false");
+  // PRINTF("\nmyTimeInfo.lastTime: %s", myTimeInfo.lastTime);
+  // PRINTF("\ntimeString: %s", timeString);
+  // PRINTF("\ntimeChanged: %s", myTimeInfo.timeChanged ? "true" : "false");
+}
+void updateTimeTask(char* timeString, int length) {
+  ntpTime.getTimeString(timeString, length);
+  updateTimeInfo(timeString);
 }
 void update_time_task(void *arg) {
   int length = TIME_STRING_LENGTH * sizeof(char);
   char timeString[length];
   while(true) {
-    ntpTime.getTimeString(timeString, length);
-    updateTimeInfo(timeString);
+    updateTimeTask(timeString, length);
     taskDelay(1000);
   }
 }
 void createTimeTask() {
   xTaskCreate(update_time_task, "update_time_task", 2048, NULL, tskIDLE_PRIORITY, &updateTimeTaskHandle);
 }
+#endif
 
 void publishWaterLevelInfo(int waterLevel) {
   char waterLevelBuff[100];
@@ -223,7 +276,7 @@ void publishWaterLevelInfo(int waterLevel) {
 }
 void printWaterLevelInfo() {
   if (waterLevelTaskHandle != NULL && eTaskGetState(waterLevelTaskHandle) == eSuspended) {
-    ESP_LOGI("MAIN", "printWaterLevelInfo(): task is suspended");
+    ESP_LOGI(LOG_TAG_MAIN, "printWaterLevelInfo(): task is suspended");
     return;
   }
   if (!myWaterLevelInfo.enableDisplayInfo) return;
@@ -231,7 +284,9 @@ void printWaterLevelInfo() {
   boolean updateValue = myWaterLevelInfo.valueOnDisplay == -1 || (myWaterLevelInfo.lastValue != myWaterLevelInfo.valueOnDisplay);
   if (updateValue) {
     int waterLevel = myWaterLevelInfo.lastValue;
+    #ifdef DISPLAY_ENABLED
     display.showWaterLevel(waterLevel);
+    #endif
     myWaterLevelInfo.valueOnDisplay = waterLevel;
   }
 }
@@ -244,14 +299,17 @@ void updateWaterLevelInfo(int waterLevel) {
   }
   myWaterLevelInfo.lastValue = waterLevel;
 }
-void water_level_task(void *arg) {
-  while(true) {
-    int waterLevel = digitalRead(SENSOR_PIN);
+void waterLevelTask() {
+  int waterLevel = digitalRead(SENSOR_PIN);
 
-    ESP_LOGI("MAIN", "Water Sensor Level: %d", waterLevel);
+    ESP_LOGI(LOG_TAG_MAIN, "Water Sensor Level: %d", waterLevel);
 
     updateWaterLevelInfo(waterLevel);
     publishWaterLevelInfo(waterLevel);
+}
+void water_level_task(void *arg) {
+  while(true) {
+    waterLevelTask();
     taskDelay(WATER_LEVEL_INFO_UPDATE_INTERVAL * 1000);
   }
 }
@@ -269,7 +327,7 @@ void publishBatteryInfo(int batteryChargeLevel, double batteryVoltage) {
 }
 void printBatteryInfo() {
   if (batteryInfoTaskHandle != NULL && eTaskGetState(batteryInfoTaskHandle) == eSuspended) {
-    ESP_LOGI("MAIN", "printBatteryInfo(): task is suspended");
+    ESP_LOGI(LOG_TAG_MAIN, "printBatteryInfo(): task is suspended");
     return;
   }
   if (!myBatteryInfo.enableDisplayInfo) {
@@ -279,7 +337,9 @@ void printBatteryInfo() {
   boolean updateCharge = updateVoltage || myBatteryInfo.chargeOnDisplay == -1 || (myBatteryInfo.lastCharge != myBatteryInfo.chargeOnDisplay);
   boolean isCharging = myBatteryInfo.lastVoltage >= MIN_USB_VOL;
 
+  #ifdef DISPLAY_ENABLED
   display.showBatteryInfo(updateCharge, myBatteryInfo.lastCharge, isCharging, updateVoltage, myBatteryInfo.lastVoltage);
+  #endif
 
   if (updateCharge) {
     myBatteryInfo.chargeOnDisplay = myBatteryInfo.lastCharge;
@@ -304,64 +364,70 @@ void updateBatteryInfo(int batteryChargeLevel, double batteryVoltage) {
   }
   myBatteryInfo.lastCharge = batteryChargeLevel;
   myBatteryInfo.lastVoltage = batteryVoltage;
-  // Serial.printf("\nmyBatteryInfo.prevCharge %d", myBatteryInfo.prevCharge);
-  // Serial.printf("\nmyBatteryInfo.lastVoltage %f", myBatteryInfo.lastVoltage);
-  // Serial.printf("\nmyBatteryInfo.prevVoltage %f", myBatteryInfo.prevVoltage);
-  // Serial.printf("\nmyBatteryInfo.chargeChanged %s", myBatteryInfo.chargeChanged ? "true" : "false");
-  // Serial.printf("\nmyBatteryInfo.voltageChanged %s", myBatteryInfo.voltageChanged ? "true" : "false");
+  // PRINTF("\nmyBatteryInfo.prevCharge %d", myBatteryInfo.prevCharge);
+  // PRINTF("\nmyBatteryInfo.lastVoltage %f", myBatteryInfo.lastVoltage);
+  // PRINTF("\nmyBatteryInfo.prevVoltage %f", myBatteryInfo.prevVoltage);
+  // PRINTF("\nmyBatteryInfo.chargeChanged %s", myBatteryInfo.chargeChanged ? "true" : "false");
+  // PRINTF("\nmyBatteryInfo.voltageChanged %s", myBatteryInfo.voltageChanged ? "true" : "false");
+}
+void batteryInfoTask() {
+  int batteryChargeLevel = battery.getBatteryChargeLevel();
+  double batteryVoltage = battery.getBatteryVolts();
+
+  ESP_LOGI(LOG_TAG_MAIN, "Volts: %.2f", batteryVoltage);
+  ESP_LOGI(LOG_TAG_MAIN, "Charge level: %d", batteryChargeLevel);
+  ESP_LOGI(LOG_TAG_MAIN, "Charge level (using the reference table): %d", battery.getBatteryChargeLevel(true));
+
+  updateBatteryInfo(batteryChargeLevel, batteryVoltage);
+  publishBatteryInfo(batteryChargeLevel, batteryVoltage);
 }
 void battery_info_task(void *arg) {
   while(true) {
-    int batteryChargeLevel = battery.getBatteryChargeLevel();
-    double batteryVoltage = battery.getBatteryVolts();
-
-    ESP_LOGI("MAIN", "Volts: %.2f", batteryVoltage);
-    ESP_LOGI("MAIN", "Charge level: %d", batteryChargeLevel);
-    ESP_LOGI("MAIN", "Charge level (using the reference table): %d", battery.getBatteryChargeLevel(true));
-
-    updateBatteryInfo(batteryChargeLevel, batteryVoltage);
-    publishBatteryInfo(batteryChargeLevel, batteryVoltage);
-    
-    // Serial.printf("\nbattery_info_task() - Free Stack Space: %d\n", uxTaskGetStackHighWaterMark(NULL));
+    batteryInfoTask();
+    // PRINTF("\nbattery_info_task() - Free Stack Space: %d\n", uxTaskGetStackHighWaterMark(NULL));
     taskDelay(BATTERY_INFO_UPDATE_INTERVAL * 1000);
   }
 }
 void suspendBatteryInfoTask() {
   if (batteryInfoTaskHandle == NULL) {
-    ESP_LOGI("MAIN", "suspendBatteryInfoTask(): batteryInfoTask not yet created");
+    ESP_LOGI(LOG_TAG_MAIN, "suspendBatteryInfoTask(): batteryInfoTask not yet created");
     return;
   }
-  ESP_LOGI("MAIN", "Suspending batteryInfo task");
+  ESP_LOGI(LOG_TAG_MAIN, "Suspending batteryInfo task");
   vTaskSuspend(batteryInfoTaskHandle);
 }
 void createBatteryInfoTask() {
   if (batteryInfoTaskHandle != NULL) {
-    ESP_LOGI("MAIN", "createBatteryInfoTask(): batteryInfoTask already created");
+    ESP_LOGI(LOG_TAG_MAIN, "createBatteryInfoTask(): batteryInfoTask already created");
     return;
   }
-  ESP_LOGI("MAIN", "Creating batteryInfo task ");
+  ESP_LOGI(LOG_TAG_MAIN, "Creating batteryInfo task ");
   xTaskCreate(battery_info_task, "battery_info_task", 10000, NULL, tskIDLE_PRIORITY, &batteryInfoTaskHandle);
 }
 void resumeBatteryInfoTask() {
   if (batteryInfoTaskHandle == NULL) {
     createBatteryInfoTask();
   } else {
-    ESP_LOGI("MAIN", "Resuming batteryInfo task");
+    ESP_LOGI(LOG_TAG_MAIN, "Resuming batteryInfo task");
     vTaskResume(batteryInfoTaskHandle);
   }
 }
 
 void printTime() {
   if (myTimeInfo.timeChanged && strcmp(myTimeInfo.timeOnDisplay, myTimeInfo.lastTime) != 0) {
+    #ifdef DISPLAY_ENABLED
     display.showTime(myTimeInfo.lastTime);
+    #endif
   }
   strcpy(myTimeInfo.timeOnDisplay, myTimeInfo.lastTime);
 }
 
+#ifdef DISPLAY_ENABLED
 void update_display_task(void *arg) {
   while(true) {
-    // if (!isDisplayActive() || !tft.availableForWrite()) break;
-    // printTime();
+    if (NTP_TIME_ENABLED) {
+      printTime();
+    }
     switch (myMenuInfo.activeMenu) {
       case BATTERY_INFO:
         printBatteryInfo();
@@ -374,11 +440,12 @@ void update_display_task(void *arg) {
       case DEEP_SLEEP:
       default:
         break;
-        // Serial.println("Active menu has no value to display");
+        // PRINTLN("Active menu has no value to display");
     }
     taskDelay(500);
   }
 }
+#endif
 
 void pinoutInit() {
   pinMode(ADC_EN, OUTPUT);
@@ -388,7 +455,9 @@ void pinoutInit() {
 
 void wifi_scan()
 {
+  #ifdef DISPLAY_ENABLED
   display.showScanningWifi();
+  #endif
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
@@ -408,7 +477,9 @@ void wifi_scan()
     strcpy(networksFound[i], wifiNetworksBuff);        
   }
   
+  #ifdef DISPLAY_ENABLED
   display.showWifiScanned(networksFound, n);
+  #endif
   // WiFi.mode(WIFI_OFF);
 
   for (int i = 0; i < n; ++i) {
@@ -417,10 +488,14 @@ void wifi_scan()
 }
 
 void changeMenuOption(MENUS menuOption) {
+    #ifdef DISPLAY_ENABLED
     display.clearDisplayDetailArea();
+    #endif
     switch (menuOption) {
     case INSTRUCTIONS:
+        #ifdef DISPLAY_ENABLED
         display.showInstructions();
+        #endif
         break;
     case WATER_LEVEL:
         myWaterLevelInfo.valueOnDisplay = -1;
@@ -434,19 +509,23 @@ void changeMenuOption(MENUS menuOption) {
 }
 
 void connectWifi() {
-  Serial.print("Connecting to WIFI ");
-  Serial.println(myConfig.wifiSSID);
+  PRINT("Connecting to WIFI ");
+  PRINTLN(myConfig.wifiSSID);
 
+  #ifdef DISPLAY_ENABLED
   display.showConnectingWifi(myConfig.wifiSSID);
+  #endif
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(myConfig.wifiSSID, myConfig.wifiPassword);
   while (WiFi.status() != WL_CONNECTED) {
-    Serial.print('.');
-    delay(1000);
+    delay(50);
   }
+  PRINTLN("WIFI connected.");
 
+  #ifdef DISPLAY_ENABLED
   display.showWifiConnected(myConfig.wifiSSID, WiFi.localIP().toString().c_str());
+  #endif
 }
 
 boolean validateLongClick(Button2 &b) {
@@ -454,7 +533,7 @@ boolean validateLongClick(Button2 &b) {
   boolean validTime = time >= MINIMUM_TIME_LONG_CLICK;
 
   if (!validTime) {
-    ESP_LOGI("MAIN", "Invalid longClick time: %dms", time);
+    ESP_LOGI(LOG_TAG_MAIN, "Invalid longClick time: %dms", time);
     return false;
   }
   return true;
@@ -462,44 +541,54 @@ boolean validateLongClick(Button2 &b) {
 void button_init()
 {
   leftButton.setLongClickHandler([](Button2 & b) {
+    #ifdef DISPLAY_ENABLED
     display.wakeUpDisplay();
+    #endif
     resetSleepTimers();
     if (!validateLongClick(b)) return;
-    ESP_LOGI("MAIN", "Left button long click");
-    ESP_LOGI("MAIN", "Go to Scan WIFI...");
+    ESP_LOGI(LOG_TAG_MAIN, "Left button long click");
+    ESP_LOGI(LOG_TAG_MAIN, "Go to Scan WIFI...");
     changeMenuOption(WIFI_SCAN);
     wifi_scan();
   });
   leftButton.setClickHandler([](Button2 & b) {
+    #ifdef DISPLAY_ENABLED
     display.wakeUpDisplay();
+    #endif
     resetSleepTimers();
-    ESP_LOGI("MAIN", "Left button press");
-    ESP_LOGI("MAIN", "Go to Water Level info..");
+    ESP_LOGI(LOG_TAG_MAIN, "Left button press");
+    ESP_LOGI(LOG_TAG_MAIN, "Go to Water Level info..");
     changeMenuOption(WATER_LEVEL);
   });
   leftButton.setDoubleClickHandler([](Button2 & b) {
-    ESP_LOGI("MAIN", "Truncating log file");
+    ESP_LOGI(LOG_TAG_MAIN, "Truncating log file");
     persistentLog.truncateLogFile();
   });
 
   rightButton.setLongClickHandler([](Button2 & b) {
+    #ifdef DISPLAY_ENABLED
     display.wakeUpDisplay();
+    #endif
     resetSleepTimers();
     if (!validateLongClick(b)) return;
-    ESP_LOGI("MAIN", "Right button long click");
+    ESP_LOGI(LOG_TAG_MAIN, "Right button long click");
     changeMenuOption(DEEP_SLEEP);
+    #ifdef DISPLAY_ENABLED
     display.showGoingToDeepSleep();
+    #endif
     goToSleep();
   });
   rightButton.setClickHandler([](Button2 & b) {
+    #ifdef DISPLAY_ENABLED
     display.wakeUpDisplay();
+    #endif
     resetSleepTimers();
-    ESP_LOGI("MAIN", "Right button click");
-    ESP_LOGI("MAIN", "Go to Battery info..");
+    ESP_LOGI(LOG_TAG_MAIN, "Right button click");
+    ESP_LOGI(LOG_TAG_MAIN, "Go to Battery info..");
     changeMenuOption(BATTERY_INFO);
   });
   rightButton.setDoubleClickHandler([](Button2 & b) {
-    ESP_LOGI("MAIN", "Publishing log file");
+    ESP_LOGI(LOG_TAG_MAIN, "Publishing log file");
     publishLogContent();
   });
 }
@@ -528,41 +617,53 @@ bool logFlushHandler(const char *buffer, int n) {
 void logInit() {
   persistentLog.flushCallback = &logFlushHandler;
   esp_log_set_vprintf(&redirectToLittleFS);
-  esp_log_level_set("*", ESP_LOG_VERBOSE);
+  esp_log_level_set("*", LOG_LEVEL);
 }
 
 void setup() {
   serialInit();
   pinoutInit();
   logInit();
-  if (DISPLAY_ENABLED) {
+  #ifdef DISPLAY_ENABLED
     display.init();
-  }
+  #endif
+
   logBootCount();
   logWakeupReason();
+
   loadAppConfig();
-  changeMenuOption(INSTRUCTIONS);
-  if (DISPLAY_ENABLED) {
+
+  #ifdef DISPLAY_ENABLED
+    changeMenuOption(INSTRUCTIONS);
     button_init();
-  }
+  #endif
+
   espNow.init(myConfig.espNowGatewayMacAddress, myConfig.wifiSSID);
-  if (NTP_TIME_ENABLED) {
+
+  #ifndef LOW_POWER_MODE
+  #ifdef NTP_TIME_ENABLED
     createTimeTask();
-  }
+  #endif
   createWaterLevelTask();
   createBatteryInfoTask();
   createDeepSleepTask();
+  #else
+    waterLevelTask();
+    batteryInfoTask();
+    initDeepSleep();
+  #endif
 }
 
 void loop() {
-  if (DISPLAY_ENABLED) {
-    button_loop();
-  }
+  #ifdef DISPLAY_ENABLED
+  button_loop();
+  #endif
 }
 
+#ifdef DISPLAY_ENABLED
 void display_sleep_task(void *args) {
   while(true) {
-    ESP_LOGI("MAIN", "Display sleep timer: %d", display.getDisplaySleepTimer());
+    ESP_LOGI(LOG_TAG_MAIN, "Display sleep timer: %d", display.getDisplaySleepTimer());
     if (display.getDisplaySleepTimer() == 0) {
       display.turnOffDisplay();
     } else {
@@ -571,4 +672,5 @@ void display_sleep_task(void *args) {
     taskDelay(1000);
   }
 }
+#endif
 
